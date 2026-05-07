@@ -85,3 +85,13 @@ python3 download_bam.py --input snyder2016_metadata_GSE_bam_subset.csv \
 ```
 
 Both scripts support background execution via `nohup ... > logfile.log 2>&1 &` and skip already-completed samples on re-run.
+
+### `utils/extract_fastq_from_bam.py`
+
+Extracts paired FASTQs from locally downloaded BAMs using `samtools collate | samtools fastq`. Preferred over `fasterq-dump` when BAMs are already on disk, as it avoids a redundant SRA download. Skips samples whose FASTQs already exist and skips BAMs that fail `samtools quickcheck` (i.e. are still downloading or truncated).
+
+```
+python3 utils/extract_fastq_from_bam.py \
+    --input snyder2016_metadata_GSE_bam_subset.csv \
+    --bamdir data/bam --outdir data/fastq --tmpdir data/tmp --threads 6
+```
