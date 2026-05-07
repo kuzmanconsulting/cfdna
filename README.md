@@ -57,3 +57,31 @@ Key columns:
 ### `SraRunTable.csv`
 
 Downloaded from the NCBI SRA Run Selector at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE71378. Contains one row per SRR run with NCBI-side metadata. The columns relevant to this project (`Run`, `Bases`, `Bytes`) have been merged into `snyder2016_metadata_GSE.csv`; this file is retained as the authoritative source for any additional SRA-level fields.
+
+### `snyder2016_metadata_GSE_bam_subset.csv`
+
+Three-sample subset of the main manifest used for alignment benchmarking: IH03 (SSP, 2×39, healthy), IA07 (DSP, 2×101, autoimmune), and IC25 (SSP, 43/42 asymmetric, cancer). These samples were chosen to cover both library protocols, symmetric and asymmetric read configurations, and a range of read lengths, and are used to compare the original Snyder alignments (downloaded BAMs) against re-alignment with modern tools.
+
+## Scripts
+
+### `download_fastq.py`
+
+Downloads raw FASTQ files for all samples via `fasterq-dump` (SRA Toolkit). Reads `srr_accession` from an input CSV, skips samples whose FASTQs already exist, and reports per-sample timing and file sizes.
+
+```
+python3 download_fastq.py --input snyder2016_metadata_GSE.csv \
+    --outdir data/fastq --tmpdir data/tmp --threads 6
+```
+
+All 60 samples were submitted to SRA as aligned BAMs; `fasterq-dump` converts them back to raw reads on the fly.
+
+### `download_bam.py`
+
+Downloads original aligned BAMs via `sam-dump | samtools view -bS`. Produces one `{SRR}.bam` per sample in the output directory. Intended for the benchmarking subset, but accepts any CSV with an `srr_accession` column.
+
+```
+python3 download_bam.py --input snyder2016_metadata_GSE_bam_subset.csv \
+    --outdir data/bam --threads 6
+```
+
+Both scripts support background execution via `nohup ... > logfile.log 2>&1 &` and skip already-completed samples on re-run.
