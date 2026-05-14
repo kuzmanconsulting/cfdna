@@ -1,0 +1,4 @@
+rerun-incomplete: true
+use-conda: true
+cores: 16
+printshellcmds: true

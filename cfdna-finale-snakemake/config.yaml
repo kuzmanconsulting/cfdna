@@ -1,0 +1,28 @@
+samplesheet: "samplesheet.csv"
+telegram_bot_env: "~/.telegram_bot.env"   # Path to .telegram_bot.env file; leave empty to disable notifications
+run_id: "test"             # Human-readable label prepended to Telegram notifications
+
+bam_dir: "/mnt/scratch/DM/cfdna/data/bam"    # Relative or absolute; {srr_accession}.bam lives here
+
+refs:
+  # Snyder BAMs are aligned to GRCh37 (1000 Genomes phase 2, no 'chr' prefix).
+  # Provide a 2bit and chromsizes file whose contig names match the BAM header.
+  genome_2bit:  "/mnt/scratch/DM/cfdna/refs/hg19.2bit"
+  chrom_sizes:  "/mnt/scratch/DM/cfdna/refs/hg19.chrom.sizes"
+
+length_classes:
+  all:   {min: null, max: null}
+  short: {min: 35,   max: 119}    # exclusive of 120 to avoid overlap with `long`
+  long:  {min: 120,  max: 220}
+
+params:
+  mapq: 30
+  window_size_bp: 100000          # interval MDS bin width
+  kmer: 4
+  threads:
+    preprocess: 8
+    finaletoolkit: 4
+
+resources:
+  java_max_gb: 32
+  java_min_gb: 4

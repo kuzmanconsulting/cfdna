@@ -1,0 +1,94 @@
+import os
+import pandas as pd
+
+
+configfile: "config.yaml"
+
+
+samples = pd.read_csv(config["samplesheet"])
+
+required_cols = {"sample_id", "srr_accession"}
+missing = required_cols - set(samples.columns)
+if missing:
+    raise ValueError(f"samplesheet is missing required columns: {missing}")
+
+# Validate that every {srr}.bam exists in bam_dir
+bam_dir = config["bam_dir"]
+missing_bams = []
+for _, row in samples.iterrows():
+    bam = os.path.join(bam_dir, f"{row['srr_accession']}.bam")
+    if not os.path.exists(bam):
+        missing_bams.append(f"  {row['sample_id']}: {bam}")
+if missing_bams:
+    raise FileNotFoundError("Input BAMs not found:\n" + "\n".join(missing_bams))
+
+# sample_id -> {srr_accession, library_type, sample_group, ...}
+sample_dict = samples.set_index("sample_id").to_dict(orient="index")
+
+SAMPLES = list(sample_dict.keys())
+CLASSES = list(config["length_classes"].keys())
+
+
+def srr_for(sample):
+    return sample_dict[sample]["srr_accession"]
+
+
+def input_bam(wildcards):
+    return os.path.join(bam_dir, f"{srr_for(wildcards.sample)}.bam")
+
+
+def length_flags(cls):
+    """Return CLI flag string for --min-length/--max-length for a length class."""
+    spec = config["length_classes"][cls]
+    parts = []
+    if spec.get("min") is not None:
+        parts += ["-min", str(spec["min"])]
+    if spec.get("max") is not None:
+        parts += ["-max", str(spec["max"])]
+    return " ".join(parts)
+
+
+wildcard_constraints:
+    sample="[^/.]+",
+    cls="|".join(CLASSES),
+
+
+# Rules
+include: "workflow/rules/preprocess.smk"
+include: "workflow/rules/windows.smk"
+include: "workflow/rules/end_motifs.smk"
+include: "workflow/rules/interval_motifs.smk"
+include: "workflow/rules/frag_lengths.smk"
+
+
+def _tg_notify(msg):
+    env = config.get("telegram_bot_env", "")
+    if not env:
+        return
+    run_id = config.get("run_id", "")
+    prefix = f"[{run_id}] " if run_id else ""
+    shell(f"source {env} && "
+          f"curl -s -d \"chat_id=$TELEGRAM_CHAT_ID&text={prefix}{msg}\" "
+          f"\"https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage\" > /dev/null")
+
+
+onstart:
+    _tg_notify("cfdna-finale started 🚀")
+
+onsuccess:
+    _tg_notify("cfdna-finale finished successfully ✅")
+
+onerror:
+    _tg_notify("cfdna-finale FAILED ❌ — check snakemake.log")
+
+
+rule all:
+    input:
+        # End motifs + MDS per length class
+        [f"results/{s}/end_motifs/{s}.{c}.tsv"     for s in SAMPLES for c in CLASSES],
+        [f"results/{s}/end_motifs/{s}.{c}.mds.txt" for s in SAMPLES for c in CLASSES],
+        # Interval end motifs + interval MDS per length class
+        [f"results/{s}/interval_mds/{s}.{c}.interval_mds.bed" for s in SAMPLES for c in CLASSES],
+        # Fragment length distribution
+        [f"results/{s}/frag_lengths/{s}.frag_length_bins.tsv" for s in SAMPLES],
+        [f"results/{s}/frag_lengths/{s}.frag_length_dist.png" for s in SAMPLES],
