@@ -1,4 +1,4 @@
-name: cfdna-finale
+name: snakemake-env
 channels:
   - conda-forge
   - bioconda

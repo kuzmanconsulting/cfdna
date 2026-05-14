@@ -40,7 +40,7 @@ rule end_motifs:
     input:
         bam="work/{sample}/filter/{sample}.{cls}.bam",
         bai="work/{sample}/filter/{sample}.{cls}.bam.bai",
-        ref2bit=config["refs"]["genome_2bit"],
+        ref2bit="work/refs/hg19_nochr.2bit",
     output:
         "results/{sample}/end_motifs/{sample}.{cls}.tsv",
     params:

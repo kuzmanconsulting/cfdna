@@ -6,7 +6,7 @@ rule interval_end_motifs:
     input:
         bam="work/{sample}/filter/{sample}.{cls}.bam",
         bai="work/{sample}/filter/{sample}.{cls}.bam.bai",
-        ref2bit=config["refs"]["genome_2bit"],
+        ref2bit="work/refs/hg19_nochr.2bit",
         intervals=windows_bed,
     output:
         "results/{sample}/interval_end_motifs/{sample}.{cls}.interval_end_motifs.tsv",

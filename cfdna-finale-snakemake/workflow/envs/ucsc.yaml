@@ -1,0 +1,7 @@
+name: cfdna-finale-ucsc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - ucsc-twobittofa=472
+  - ucsc-fatotwobit=472

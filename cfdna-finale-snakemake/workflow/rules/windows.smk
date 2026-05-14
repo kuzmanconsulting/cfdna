@@ -1,6 +1,6 @@
 rule make_windows:
     input:
-        chrom_sizes=config["refs"]["chrom_sizes"],
+        chrom_sizes="work/refs/hg19_nochr.chrom.sizes",
     output:
         "work/windows/genome.{w}bp.bed",
     conda:

@@ -54,6 +54,7 @@ wildcard_constraints:
 
 
 # Rules
+include: "workflow/rules/prep_refs.smk"
 include: "workflow/rules/preprocess.smk"
 include: "workflow/rules/windows.smk"
 include: "workflow/rules/end_motifs.smk"
