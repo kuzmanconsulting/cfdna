@@ -21,11 +21,13 @@ plan in `../End-motif-analysis.md`.
 - `results/{sample}/frag_lengths/{sample}.frag_length_bins.tsv` — full fragment-length histogram (1 bp bins)
 - `results/{sample}/frag_lengths/{sample}.frag_length_dist.png` — distribution plot with S-WPS / L-WPS overlays
 
-## Driver env
+## Snakemake installation
+
+Using preferred python env manager (micromamba), create a driver env for Snakemake.
 
 ```bash
 micromamba env create -f environment.yml
-micromamba activate cfdna-finale
+micromamba activate snakemake-env
 ```
 
 The driver env contains only Snakemake + pandas. Each rule resolves its own
