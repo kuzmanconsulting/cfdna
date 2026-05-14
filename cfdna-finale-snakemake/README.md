@@ -4,6 +4,10 @@ End-motif analysis pipeline for Snyder 2016 cfDNA BAMs, built on
 [FinaleToolkit](https://epifluidlab.github.io/FinaleToolkit/). Implements the
 plan in `../End-motif-analysis.md`.
 
+## Pipeline DAG
+
+![Snakemake DAG](dag.png)
+
 ## Inputs
 
 - `config.yaml` — set `refs.genome_2bit` and `refs.chrom_sizes` to hg19 paths
