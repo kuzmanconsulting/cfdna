@@ -20,6 +20,7 @@ rule interval_end_motifs:
         "work/logs/interval_end_motifs_{sample}_{cls}.log",
     shell:
         "finaletoolkit interval-end-motifs "
+        "-v "
         "-k {params.kmer} -q {params.mapq} "
         "-w {threads} "
         "-o {output} "
@@ -36,4 +37,4 @@ rule interval_mds:
     log:
         "work/logs/interval_mds_{sample}_{cls}.log",
     shell:
-        "finaletoolkit interval-mds {input} -o {output} > {log} 2>&1"
+        "finaletoolkit interval-mds {input} {output} > {log} 2>&1"

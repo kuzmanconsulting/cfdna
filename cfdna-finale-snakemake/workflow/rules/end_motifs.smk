@@ -53,6 +53,7 @@ rule end_motifs:
         "work/logs/end_motifs_{sample}_{cls}.log",
     shell:
         "finaletoolkit end-motifs "
+        "-v "
         "-k {params.kmer} -q {params.mapq} "
         "-w {threads} "
         "-o {output} "

@@ -13,7 +13,9 @@ rule frag_length_bins:
         "work/logs/frag_length_bins_{sample}.log",
     shell:
         "finaletoolkit frag-length-bins "
+        "-v "
         "-q {params.mapq} --bin-size 1 "
+        "-min 1 -max 1000 "
         "-o {output.tsv} "
         "{input.bam} > {log} 2>&1"
 

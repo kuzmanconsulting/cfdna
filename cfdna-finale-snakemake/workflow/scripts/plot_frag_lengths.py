@@ -15,13 +15,11 @@ sample = snakemake.wildcards.sample
 
 df = pd.read_csv(tsv_path, sep="\t", comment="#")
 
-# Heuristic column detection: first numeric column is length, second is count.
-length_col = next(c for c in df.columns if "length" in c.lower() or "len" in c.lower())
-count_col = next(c for c in df.columns if c != length_col and pd.api.types.is_numeric_dtype(df[c]))
-
-df = df.sort_values(length_col)
-lengths = df[length_col].to_numpy()
-counts = df[count_col].to_numpy()
+# FinaleToolkit frag-length-bins schema: min, max, count (one row per bin).
+# Fragment length = bin midpoint (== min == max when --bin-size 1).
+df = df.sort_values("min")
+lengths = ((df["min"] + df["max"]) / 2).to_numpy()
+counts = df["count"].to_numpy()
 
 mask_short = (lengths >= 35) & (lengths <= 80)
 mask_long = (lengths >= 120) & (lengths <= 180)
