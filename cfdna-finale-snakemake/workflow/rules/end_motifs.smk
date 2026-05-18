@@ -18,6 +18,12 @@ rule filter_file:
     log:
         "work/logs/filter_file_{sample}_{cls}.log",
     shell:
+        # finaletoolkit filter-file stages multiple ~full-size intermediate
+        # BAMs (output1/2/3) in tempfile.gettempdir(). The default /tmp is far
+        # too small for a 46 GB md.bam x 4 concurrent classes -> "writing
+        # failed" / device full. Redirect TMPDIR onto the large work volume.
+        "mkdir -p work/tmp && "
+        "TMPDIR=$(pwd)/work/tmp "
         "finaletoolkit filter-file "
         "-q {params.mapq} {params.lflags} "
         "-w {threads} "
