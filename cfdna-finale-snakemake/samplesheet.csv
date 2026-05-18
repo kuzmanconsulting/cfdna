@@ -1,2 +1,4 @@
 sample_id,srr_accession,sample_group,library_type,coverage
 IH02,SRR2130051,healthy,SSP,30.08
+IC37,SRR2130035,cancer,SSP,38.22
+IC33,SRR2130031,cancer,SSP,1.93
