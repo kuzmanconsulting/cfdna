@@ -11,9 +11,13 @@ refs:
   chrom_sizes:  "/mnt/scratch/DM/cfdna/refs/hg19.chrom.sizes"
 
 length_classes:
-  all:   {min: null, max: null}
-  short: {min: 35,   max: 119}    # exclusive of 120 to avoid overlap with `long`
-  long:  {min: 120,  max: 220}
+  # Keyed to the analytical questions in End-motif-analysis.md (classes I-IV).
+  # `all` is the unstratified genome-wide baseline.
+  all: {min: null, max: null}
+  I:   {min: null, max: 119}    # < 120: sub-nucleosomal (no lower bound - faithful to Q)
+  II:  {min: 120,  max: null}   # >= 120: mono + di/tri-nucleosomal, open-ended tail
+  III: {min: 35,   max: 80}     # Snyder strict S-WPS
+  IV:  {min: 120,  max: 180}    # Snyder strict L-WPS
 
 params:
   mapq: 30
