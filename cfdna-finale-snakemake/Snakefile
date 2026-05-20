@@ -88,6 +88,8 @@ rule all:
         # End motifs + MDS per length class
         [f"results/{s}/end_motifs/{s}.{c}.tsv"     for s in SAMPLES for c in CLASSES],
         [f"results/{s}/end_motifs/{s}.{c}.mds.txt" for s in SAMPLES for c in CLASSES],
+        # Fragment-end counts per length class (sampling size for JS noise floor)
+        [f"results/{s}/end_motifs/{s}.{c}.n_ends.txt" for s in SAMPLES for c in CLASSES],
         # Interval end motifs + interval MDS per length class
         [f"results/{s}/interval_mds/{s}.{c}.interval_mds.bed" for s in SAMPLES for c in CLASSES],
         # Fragment length distribution

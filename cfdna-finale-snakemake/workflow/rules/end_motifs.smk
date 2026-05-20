@@ -77,3 +77,22 @@ rule mds:
         "work/logs/mds_{sample}_{cls}.log",
     shell:
         "finaletoolkit mds {input} > {output} 2> {log}"
+
+
+rule n_ends:
+    """Count fragment ends per length class.
+
+    filter-file enforces properly-paired + read1 + not secondary/supplementary,
+    so 1 record in the filtered BAM == 1 fragment end. Used downstream as the
+    sampling-size input to the analytic JS-divergence noise floor.
+    """
+    input:
+        "work/{sample}/filter/{sample}.{cls}.bam",
+    output:
+        "results/{sample}/end_motifs/{sample}.{cls}.n_ends.txt",
+    conda:
+        "../envs/samtools.yaml"
+    log:
+        "work/logs/n_ends_{sample}_{cls}.log",
+    shell:
+        "samtools view -c {input} > {output} 2> {log}"

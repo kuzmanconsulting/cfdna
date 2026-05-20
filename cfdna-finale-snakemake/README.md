@@ -8,6 +8,12 @@ plan in `../End-motif-analysis.md`.
 
 ![Snakemake DAG](dag.png)
 
+Made using
+
+```bash
+snakemake --rulegraph --profile profiles/default | dot -Tpng -o dag.png
+```
+
 ## Inputs
 
 - `config.yaml` — set `refs.genome_2bit` and `refs.chrom_sizes` to hg19 paths
