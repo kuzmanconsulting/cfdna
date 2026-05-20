@@ -335,33 +335,63 @@ write_tsv(consistency, file.path(out_dir, "Q1_6_consistency.tsv"))
 message("Wrote Q1_6_consistency_bar.png to ", normalizePath(out_dir))
 
 # ============================================================================
-# Q1_6a — motifs with |mean log2FC| > 0.25, colored by consistency tier
+# Q1_6a — motifs with |mean log2FC| > threshold, colored by consistency tier,
+#          RC partner annotated on x-axis label.
 # ============================================================================
-mean_lfc <- log2fc |>
+rc <- function(kmer) {
+  comp <- chartr("ACGT", "TGCA", kmer)
+  paste(rev(strsplit(comp, "")[[1]]), collapse = "")
+}
+
+kmer_mean_lfc <- log2fc |>
   group_by(class, kmer) |>
   summarise(mean_lfc = mean(log2FC), .groups = "drop")
 
+lfc_thresh <- 0.4
+
 cons_lfc <- consistency |>
-  left_join(mean_lfc, by = c("class", "kmer")) |>
-  filter(abs(mean_lfc) > 0.4) |>
-  mutate(class = factor(class, levels = classes))
+  left_join(kmer_mean_lfc, by = c("class", "kmer")) |>
+  filter(abs(mean_lfc) > lfc_thresh) |>
+  mutate(class = factor(class, levels = classes)) |>
+  mutate(
+    rc_kmer  = map_chr(kmer, rc),
+    rc_status = pmap_chr(list(rc_kmer, class, mean_lfc), \(rk, cls, lfc) {
+      partner <- kmer_mean_lfc |> filter(kmer == rk, class == cls)
+      if (nrow(partner) == 0 || abs(partner$mean_lfc) <= lfc_thresh)
+        return("absent")
+      if (sign(partner$mean_lfc) == sign(lfc)) "same" else "opposite"
+    }),
+    # x-axis label: kmer with RC partner appended if present in plot
+    x_label = if_else(rc_status != "absent",
+                      paste0(kmer, "\n↔", rc_kmer),
+                      kmer)
+  )
+
+rc_border <- c(same = "#01ff3c", opposite = "#FF00CC", absent = NA)
 
 p_cons_bar <- cons_lfc |>
   ggplot(aes(reorder_within(kmer, mean_lfc, class), mean_lfc, fill = tier)) +
-  geom_col(width = 0.8) +
+  geom_col(aes(color = rc_status), width = 0.8, linewidth = 0.5) +
   geom_hline(yintercept = 0, linewidth = 0.3, color = "grey40") +
   scale_fill_manual(values = tier_colors) +
+  scale_color_manual(values = rc_border, na.value = NA,
+                     breaks = c("same", "opposite"),
+                     labels = c(same = "RC also shifted (same dir)",
+                                opposite = "RC also shifted (opposite)"),
+                     name = "RC partner",
+                     guide = guide_legend(override.aes = list(fill = "white", linewidth = 1))) +
   scale_y_continuous(labels = scales::label_number(accuracy = 0.1)) +
-  tidytext::scale_x_reordered() +
+  scale_x_reordered() +
   facet_wrap(~ class, scales = "free_x", ncol = 2) +
-  labs(title = "4-mers with |mean log2FC| > 0.4 vs healthy",
-       x = "4-mer", y = "mean log2FC (cancer / IH02)",
+  labs(title = sprintf("4-mers with |mean log2FC| > %.1f vs healthy", lfc_thresh),
+       x = "4-mer",
+       y = "mean log2FC (cancer / IH02)",
        fill = "Consistency") +
   theme_bw(base_size = 10) +
-  theme(panel.grid.minor  = element_blank(),
-        axis.text.x = element_text(family = "mono", size = 8, angle = 45, hjust = 1))
+  theme(panel.grid.minor = element_blank(),
+        axis.text.x = element_text(family = "mono", size = 7, angle = 45, hjust = 1))
 
 ggsave(file.path(out_dir, "Q1_6a_consistency_motifs.png"), p_cons_bar,
-       width = 12, height = 5, dpi = 300)
+       width = 12, height = 5.5, dpi = 300)
 
 message("Wrote Q1_6a_consistency_motifs.png to ", normalizePath(out_dir))
