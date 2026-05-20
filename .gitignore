@@ -8,4 +8,7 @@ refs/*
 
 mmc2.xlsx
 
-analysis/
+analysis/*.png
+analysis/*.tsv
+
+.claude/
