@@ -13,9 +13,23 @@ def _chrs_for_read_counter(cfg):
 CHRS_RC = _chrs_for_read_counter(config)
 
 
+rule index_bam:
+    input:
+        bam=input_bam,
+    output:
+        bai="work/bai/{sample}.bam.bai",
+    conda:
+        "../envs/hmmcopy.yaml"
+    log:
+        "work/logs/index_{sample}.log",
+    shell:
+        "samtools index {input.bam} {output.bai} 2> {log}"
+
+
 rule read_counter:
     input:
         bam=input_bam,
+        bai="work/bai/{sample}.bam.bai",
     output:
         wig="results/{sample}/{sample}.wig",
     params:
