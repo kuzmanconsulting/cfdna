@@ -390,3 +390,111 @@ ggsave(file.path(out_dir, "Q1_6a_consistency_motifs.png"), p_cons_bar,
        width = 12, height = 5.5, dpi = 300)
 
 message("Wrote Q1_6a_consistency_motifs.png to ", normalizePath(out_dir))
+
+# ============================================================================
+# Q1_7 — PCA on cross-class consistently shifted motifs
+# Feature set: motifs that are 4/4 enriched OR 4/4 depleted in ALL 4 classes.
+# Observations: all 5 samples × 4 classes (20 rows).
+# Samples are labeled; classes are indicated by point shape / facet stripe.
+# ============================================================================
+
+# Per-class consistent motifs: 4/4 enriched or 4/4 depleted within that class
+pca7_data <- map(classes, function(cls) {
+  cons_cls <- consistency |>
+    filter(class == cls, tier %in% c("4/4 enriched", "4/4 depleted")) |>
+    select(kmer, direction = tier) |>
+    mutate(direction = if_else(direction == "4/4 enriched", "enriched", "depleted"))
+
+  message(sprintf("Q1_7 class %s: %d consistent motifs (%d enriched, %d depleted)",
+                  cls, nrow(cons_cls),
+                  sum(cons_cls$direction == "enriched"),
+                  sum(cons_cls$direction == "depleted")))
+
+  if (nrow(cons_cls) < 2) {
+    message("  → skipping (fewer than 2 motifs)")
+    return(NULL)
+  }
+
+  feat_wide <- motifs |>
+    filter(class == cls, kmer %in% cons_cls$kmer) |>
+    select(sample, kmer, freq) |>
+    pivot_wider(names_from = kmer, values_from = freq)
+
+  mat <- feat_wide |> select(-sample) |> as.matrix()
+  rownames(mat) <- feat_wide$sample
+
+  pca <- prcomp(mat, center = TRUE, scale. = FALSE)
+  pct <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+
+  scores <- as_tibble(pca$x[, 1:2], rownames = "sample") |>
+    left_join(samples, by = "sample") |>
+    mutate(class = cls)
+
+  load_scale <- max(abs(pca$x[, 1:2])) / max(abs(pca$rotation[, 1:2]))
+  top_idx <- order(sqrt(pca$rotation[, 1]^2 + pca$rotation[, 2]^2),
+                   decreasing = TRUE)[seq_len(min(20L, nrow(pca$rotation)))]
+  loadings <- as_tibble(pca$rotation[top_idx, 1:2], rownames = "kmer") |>
+    mutate(across(c(PC1, PC2), \(x) x * load_scale)) |>
+    left_join(cons_cls, by = "kmer") |>
+    mutate(class = cls)
+
+  list(scores = scores, loadings = loadings,
+       pc1_var = pct[1], pc2_var = pct[2], cls = cls)
+})
+names(pca7_data) <- classes
+pca7_data <- Filter(Negate(is.null), pca7_data)
+
+scores7_all   <- map(pca7_data, "scores")   |> list_rbind()
+loadings7_all <- map(pca7_data, "loadings") |> list_rbind()
+
+var_labels <- map_dfr(pca7_data, \(d) tibble(
+  class   = d$cls,
+  pc1_var = d$pc1_var,
+  pc2_var = d$pc2_var
+))
+
+# per-panel axis labels via dummy aesthetics on an empty geom
+axis_df <- scores7_all |>
+  distinct(class) |>
+  left_join(var_labels, by = "class") |>
+  mutate(x_lab = sprintf("PC1 (%.1f%%)", pc1_var),
+         y_lab = sprintf("PC2 (%.1f%%)", pc2_var))
+
+nudge_y7 <- scores7_all |>
+  group_by(class) |>
+  summarise(ny = diff(range(PC2)) * 0.08, .groups = "drop")
+
+scores7_all <- scores7_all |> left_join(nudge_y7, by = "class")
+
+p_q17 <- ggplot() +
+  geom_segment(data = loadings7_all,
+               aes(x = 0, y = 0, xend = PC1, yend = PC2, color = direction),
+               arrow = arrow(length = unit(0.12, "cm")),
+               linewidth = 0.4, alpha = 0.7) +
+  geom_text(data = loadings7_all,
+            aes(PC1, PC2, label = kmer, color = direction),
+            size = 2, vjust = -0.4, show.legend = FALSE) +
+  geom_point(data = scores7_all,
+             aes(PC1, PC2, color = sample, shape = group), size = 3) +
+  geom_text(data = scores7_all,
+            aes(PC1, PC2, label = sample, color = sample, nudge_y = ny),
+            stat = "identity", vjust = -0.6,
+            size = 2.8, fontface = "bold", show.legend = FALSE) +
+  scale_color_manual(
+    values = c(sample_colors, enriched = "#B2182B", depleted = "#2166AC"),
+    breaks = names(sample_colors), name = "Sample") +
+  scale_shape_manual(values = c(healthy = 16, cancer = 17), name = "Group") +
+  facet_wrap(~ factor(class, levels = classes), scales = "free", ncol = 2,
+             labeller = as_labeller(\(x) {
+               d <- var_labels[var_labels$class == x, ]
+               sprintf("Class %s  |  PC1 %.1f%%  PC2 %.1f%%", x, d$pc1_var, d$pc2_var)
+             })) +
+  labs(title = "PCA on 4/4-consistent 4-mers, per length class",
+       x = "PC1", y = "PC2") +
+  theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave(file.path(out_dir, "Q1_7_PCA_consistent_motifs.png"), p_q17,
+       width = 10, height = 8, dpi = 300)
+
+message("Wrote Q1_7_PCA_consistent_motifs.png to ", normalizePath(out_dir))
