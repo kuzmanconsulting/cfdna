@@ -23,14 +23,9 @@ stopifnot(dir.exists(res_dir))
 out_dir <- if (dir.exists(file.path(here, "analysis"))) file.path(here, "analysis") else here
 
 # --- sample registry ---------------------------------------------------------
-samples <- tribble(
-  ~sample, ~group,    ~subtype, ~depth,
-  "IH02",  "healthy", "—",      "deep",
-  "IC37",  "cancer",  "CRC",    "deep",
-  "IC33",  "cancer",  "CRC",    "shallow",
-  "IC15",  "cancer",  "SCLC",   "deep",
-  "IC32",  "cancer",  "SCLC",   "shallow",
-)
+ss_path <- file.path(out_dir, "samplesheet.csv")
+if (!file.exists(ss_path)) stop("samplesheet.csv not found in analysis/: ", ss_path)
+samples <- read_csv(ss_path, col_types = "cccc")
 classes <- c("I", "II", "III", "IV")
 
 sample_colors <- c(

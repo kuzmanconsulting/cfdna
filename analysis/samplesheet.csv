@@ -1,0 +1,6 @@
+sample,group,subtype,depth
+IH02,healthy,—,deep
+IC37,cancer,CRC,deep
+IC33,cancer,CRC,shallow
+IC15,cancer,SCLC,deep
+IC32,cancer,SCLC,shallow
