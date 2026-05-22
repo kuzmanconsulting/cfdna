@@ -12,12 +12,7 @@ def _gc_wig():
 def _map_wig():
     bin_kb = config["params"]["bin_size"] // 1000
     genome = config["refs"]["genome"]
-    # ichorCNA ships mappability WIGs with a bowtie suffix; try the common name
-    return (
-        f"$(Rscript -e 'f <- system.file(\"extdata\","
-        f" \"map_{genome}_{bin_kb}kb_150mer_{genome}_bowtie.wig\","
-        f" package=\"ichorCNA\"); if (nchar(f)==0) stop(\"map WIG not found\") else cat(f)')"
-    )
+    return f"$(Rscript -e 'cat(system.file(\"extdata\", \"map_{genome}_{bin_kb}kb.wig\", package=\"ichorCNA\"))')"
 
 
 rule ichorcna:
@@ -46,23 +41,24 @@ rule ichorcna:
         "work/logs/ichorcna_{sample}.log",
     shell:
         """
-        GC_WIG={params.gc_wig}
-        MAP_WIG={params.map_wig}
-        Rscript {params.script} \\
-            --id {wildcards.sample} \\
-            --WIG {input.wig} \\
-            --gcWig "$GC_WIG" \\
-            --mapWig "$MAP_WIG" \\
-            --genomeBuild {params.genome} \\
-            --chrs '{params.chrs}' \\
-            --chrTrain '{params.chrs}' \\
-            --normal '{params.normal}' \\
-            --ploidy '{params.ploidy}' \\
-            --maxCN {params.max_cn} \\
-            --includeHOMD {params.include_homd} \\
-            --txnE {params.txne} \\
-            --txnStrength {params.txn_strength} \\
-            --plotFileType {params.plot_type} \\
-            --outDir {params.outdir} \\
-            > {log} 2>&1
+        {{
+            GC_WIG={params.gc_wig}
+            MAP_WIG={params.map_wig}
+            Rscript {params.script} \\
+                --id {wildcards.sample} \\
+                --WIG {input.wig} \\
+                --gcWig "$GC_WIG" \\
+                --mapWig "$MAP_WIG" \\
+                --genomeBuild {params.genome} \\
+                --chrs '{params.chrs}' \\
+                --chrTrain '{params.chrs}' \\
+                --normal '{params.normal}' \\
+                --ploidy '{params.ploidy}' \\
+                --maxCN {params.max_cn} \\
+                --includeHOMD {params.include_homd} \\
+                --txnE {params.txne} \\
+                --txnStrength {params.txn_strength} \\
+                --plotFileType {params.plot_type} \\
+                --outDir {params.outdir}
+        }} > {log} 2>&1
         """
