@@ -12,6 +12,7 @@
 suppressPackageStartupMessages({
   library(tidyverse)
   library(tidytext)
+  library(ggrepel)
 })
 
 # --- paths -------------------------------------------------------------------
@@ -61,6 +62,40 @@ motifs <- tidyr::expand_grid(sample = samples$sample, class = classes) |>
   pmap(\(sample, class) read_motifs(sample, class)) |>
   list_rbind() |>
   left_join(samples, by = "sample")
+
+# ============================================================================
+# Q1_0 — per-sample 4-mer frequency barplot (fill = first nucleotide)
+# ============================================================================
+nuc_colors <- c(A = "#4393C3", T = "#FFC107", C = "#D6604D", G = "#4DAC26")
+
+motif_bar_data <- motifs |>
+  mutate(
+    first_nuc = substr(kmer, 1, 1),
+    kmer      = factor(kmer, levels = sort(unique(kmer)))
+  )
+
+p_motif_bar <- motif_bar_data |>
+  mutate(sample = factor(sample, levels = samples$sample)) |>
+  ggplot(aes(x = kmer, y = freq, fill = first_nuc)) +
+  geom_col(width = 1, linewidth = 0) +
+  scale_fill_manual(values = nuc_colors, name = "First nt") +
+  scale_x_discrete(breaks = NULL) +
+  facet_grid(class ~ sample) +
+  labs(
+    title = "4-mer end-motif frequencies",
+    x     = "4-mer motif (256)",
+    y     = "Frequency"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid   = element_blank(),
+    axis.ticks.x = element_blank(),
+    strip.background = element_rect(fill = "grey92")
+  )
+
+ggsave(file.path(out_dir, "Q1_0_motif_freq_bar.png"), p_motif_bar,
+       width = 3 * length(unique(motif_bar_data$sample)), height = 6, dpi = 300)
+message("Wrote Q1_0_motif_freq_bar.png to ", normalizePath(out_dir))
 
 # ============================================================================
 # Q1_1 — per-sample MDS by class
@@ -498,3 +533,170 @@ ggsave(file.path(out_dir, "Q1_7_PCA_consistent_motifs.png"), p_q17,
        width = 10, height = 8, dpi = 300)
 
 message("Wrote Q1_7_PCA_consistent_motifs.png to ", normalizePath(out_dir))
+
+# ============================================================================
+# Q2 — Does coverage depth distort motif profiles?
+#   Within each cancer subtype, compare deep vs shallow sample motif profiles.
+#   If depth noise << cancer-vs-normal signal, shallow samples are trustworthy.
+#
+# Requires samplesheet columns: subtype, depth ("deep"/"shallow")
+# One deep + one shallow representative per subtype; if multiple exist the
+# script averages their frequencies (future-proof for larger sample lists).
+#
+# Outputs:
+#   Q2_1_depth_scatter.png  — 256-kmer scatter: deep (x) vs shallow (y) per
+#                             subtype × class; Pearson r annotated
+#   Q2_2_depth_vs_signal.png — JSD bar: depth-noise vs cancer-signal per
+#                              subtype × class
+# ============================================================================
+
+# --- helpers -----------------------------------------------------------------
+jsd <- function(p, q) {
+  m <- (p + q) / 2
+  kl <- function(a, b) sum(ifelse(a > 0, a * log2(a / b), 0))
+  (kl(p, m) + kl(q, m)) / 2
+}
+
+avg_profile <- function(samples_vec, cls) {
+  freqs <- map(samples_vec, \(s) read_motifs(s, cls))
+  freqs <- keep(freqs, \(x) !is.null(x))
+  if (length(freqs) == 0) return(NULL)
+  bind_rows(freqs) |>
+    group_by(kmer) |>
+    summarise(freq = mean(freq), .groups = "drop")
+}
+
+# --- build depth-pair data ---------------------------------------------------
+subtypes_q2 <- samples |>
+  filter(group == "cancer", !is.na(subtype), subtype != "—") |>
+  distinct(subtype) |>
+  pull(subtype)
+
+depth_pairs <- tidyr::expand_grid(subtype = subtypes_q2, class = classes) |>
+  mutate(
+    deep_samples    = map(subtype, \(st) samples |>
+                            filter(group == "cancer", subtype == st, depth == "deep") |>
+                            pull(sample)),
+    shallow_samples = map(subtype, \(st) samples |>
+                            filter(group == "cancer", subtype == st, depth == "shallow") |>
+                            pull(sample)),
+    deep_profile    = map2(deep_samples,    class, avg_profile),
+    shallow_profile = map2(shallow_samples, class, avg_profile)
+  ) |>
+  filter(!map_lgl(deep_profile, is.null), !map_lgl(shallow_profile, is.null))
+
+scatter_data <- depth_pairs |>
+  mutate(
+    joined = map2(deep_profile, shallow_profile, \(d, s)
+      inner_join(d, s, by = "kmer", suffix = c("_deep", "_shallow"))
+    )
+  ) |>
+  select(subtype, class, joined) |>
+  unnest(joined)
+
+# Pearson r per panel
+r_labels <- scatter_data |>
+  group_by(subtype, class) |>
+  summarise(r = cor(freq_deep, freq_shallow), .groups = "drop") |>
+  mutate(label = sprintf("r = %.3f", r))
+
+# axis range (shared across all panels for comparability)
+ax_max <- max(c(scatter_data$freq_deep, scatter_data$freq_shallow)) * 1.05
+
+# GC content for point colouring (number of C/G bases in 4-mer)
+scatter_data <- scatter_data |>
+  mutate(gc = str_count(kmer, "[GC]"))
+
+high_motifs <- scatter_data |> filter(freq_deep > 0.015 | freq_shallow > 0.015)
+
+p_scatter <- ggplot(scatter_data, aes(x = freq_deep, y = freq_shallow, colour = factor(gc))) +
+  geom_abline(slope = 1, intercept = 0, colour = "grey60", linewidth = 0.4) +
+  geom_point(size = 1.4, alpha = 0.8) +
+  geom_label_repel(data = high_motifs, aes(x = freq_deep, y = freq_shallow, label = kmer),
+                   size = 2.5, colour = "black", fill = alpha("white", 0.8),
+                   label.size = 0.2, min.segment.length = 0,
+                   box.padding = 0.3, inherit.aes = FALSE) +
+  geom_text(data = r_labels, aes(label = label),
+            x = ax_max * 0.05, y = ax_max * 0.95,
+            hjust = 0, vjust = 1, size = 3, colour = "black", inherit.aes = FALSE) +
+  scale_colour_manual(
+    values = c("0" = "#4575B4", "1" = "#74ADD1", "2" = "#FEE090",
+               "3" = "#F46D43", "4" = "#D73027"),
+    name = "GC count"
+  ) +
+  scale_x_continuous(limits = c(0, ax_max), labels = scales::label_number(accuracy = 0.001)) +
+  scale_y_continuous(limits = c(0, ax_max), labels = scales::label_number(accuracy = 0.001)) +
+  facet_grid(subtype ~ class,
+             labeller = labeller(class = \(x) paste("Class", x))) +
+  labs(
+    title  = "Coverage depth: deep vs shallow motif profile concordance",
+    x      = "Deep sample — 4-mer frequency",
+    y      = "Shallow sample — 4-mer frequency"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey92"),
+    legend.position   = "right"
+  )
+
+ggsave(file.path(out_dir, "Q2_1_depth_scatter.png"), p_scatter,
+       width = 10, height = 3 * length(subtypes_q2), dpi = 300)
+message("Wrote Q2_1_depth_scatter.png to ", normalizePath(out_dir))
+
+# --- Q2_2: depth-noise JSD vs cancer-signal JSD ------------------------------
+# depth noise  = JSD(deep_cancer, shallow_cancer) per subtype × class
+# cancer signal = JSD(deep_cancer, IH02) per subtype × class
+
+ih02_profiles <- map(classes, \(cls) {
+  p <- read_motifs("IH02", cls)
+  if (is.null(p)) return(NULL)
+  tibble(class = cls, kmer = p$kmer, freq_ref = p$freq)
+}) |> list_rbind()
+
+jsd_bars <- depth_pairs |>
+  mutate(
+    jsd_depth = map2_dbl(deep_profile, shallow_profile, \(d, s) {
+      j <- inner_join(d, s, by = "kmer")
+      jsd(j$freq.x, j$freq.y)
+    }),
+    jsd_signal = pmap_dbl(list(deep_profile, class), \(d, cls) {
+      ref <- ih02_profiles |> filter(class == cls) |> select(kmer, freq_ref)
+      if (nrow(ref) == 0) return(NA_real_)
+      j <- inner_join(d, ref, by = "kmer")
+      jsd(j$freq, j$freq_ref)
+    })
+  ) |>
+  select(subtype, class, jsd_depth, jsd_signal) |>
+  pivot_longer(c(jsd_depth, jsd_signal),
+               names_to = "comparison", values_to = "jsd") |>
+  mutate(
+    comparison = factor(comparison,
+      levels = c("jsd_depth", "jsd_signal"),
+      labels = c("Depth noise\n(deep vs shallow)", "Cancer signal\n(deep vs IH02)")
+    )
+  )
+
+p_jsd2 <- ggplot(jsd_bars, aes(x = class, y = jsd, fill = comparison)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  scale_fill_manual(
+    values = c("Depth noise\n(deep vs shallow)" = "#BDBDBD",
+               "Cancer signal\n(deep vs IH02)"  = "#B2182B"),
+    name = NULL
+  ) +
+  facet_wrap(~subtype, ncol = length(subtypes_q2)) +
+  labs(
+    title = "Depth noise vs cancer signal (JSD)",
+    x     = "Length class",
+    y     = "Jensen-Shannon divergence"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey92"),
+    legend.position  = "right"
+  )
+
+ggsave(file.path(out_dir, "Q2_2_depth_vs_signal.png"), p_jsd2,
+       width = 4 * length(subtypes_q2), height = 4, dpi = 300)
+message("Wrote Q2_2_depth_vs_signal.png to ", normalizePath(out_dir))
