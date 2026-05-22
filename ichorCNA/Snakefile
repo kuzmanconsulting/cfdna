@@ -1,0 +1,69 @@
+import os
+import pandas as pd
+
+
+configfile: "config.yaml"
+
+
+samples = pd.read_csv(config["samplesheet"])
+
+required_cols = {"sample_id", "srr_accession", "sample_group"}
+missing = required_cols - set(samples.columns)
+if missing:
+    raise ValueError(f"samplesheet is missing required columns: {missing}")
+
+bam_dir = config["bam_dir"]
+missing_bams = []
+for _, row in samples.iterrows():
+    bam = os.path.join(bam_dir, f"{row['srr_accession']}.bam")
+    if not os.path.exists(bam):
+        missing_bams.append(f"  {row['sample_id']}: {bam}")
+if missing_bams:
+    raise FileNotFoundError("Input BAMs not found:\n" + "\n".join(missing_bams))
+
+sample_dict = samples.set_index("sample_id").to_dict(orient="index")
+SAMPLES = list(sample_dict.keys())
+
+
+def srr_for(sample):
+    return sample_dict[sample]["srr_accession"]
+
+
+def input_bam(wildcards):
+    return os.path.join(bam_dir, f"{srr_for(wildcards.sample)}.bam")
+
+
+wildcard_constraints:
+    sample="[^/.]+",
+
+
+include: "workflow/rules/read_counter.smk"
+include: "workflow/rules/ichorcna.smk"
+
+
+def _tg_notify(msg):
+    env = config.get("telegram_bot_env", "")
+    if not env:
+        return
+    run_id = config.get("run_id", "")
+    prefix = f"[{run_id}] " if run_id else ""
+    shell(f"source {env} && "
+          f"curl -s -d \"chat_id=$TELEGRAM_CHAT_ID&text={prefix}{msg}\" "
+          f"\"https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage\" > /dev/null")
+
+
+onstart:
+    _tg_notify("ichorCNA started 🚀")
+
+onsuccess:
+    _tg_notify("ichorCNA finished successfully ✅")
+
+onerror:
+    _tg_notify("ichorCNA FAILED ❌ — check snakemake.log")
+
+
+rule all:
+    input:
+        expand("results/{sample}/{sample}.wig", sample=SAMPLES),
+        expand("results/{sample}/{sample}.params.txt", sample=SAMPLES),
+        expand("results/{sample}/{sample}.seg", sample=SAMPLES),

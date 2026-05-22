@@ -1,0 +1,5 @@
+rerun-incomplete: true
+use-conda: true
+cores: 16
+resources: mem_mb=128000
+printshellcmds: true

@@ -1,0 +1,30 @@
+samplesheet: "samplesheet.csv"
+telegram_bot_env: "~/.telegram_bot.env"   # leave empty to disable notifications
+run_id: "ichorCNA"
+
+bam_dir: "/mnt/scratch/DM/cfdna/data/bam"   # {srr_accession}.bam lives here
+
+refs:
+  # GRCh37 / hg19, no 'chr' prefix (1000 Genomes phase 2 style)
+  genome: "hg19"
+
+params:
+  bin_size: 500000     # readCounter window in bp; 500 kb is standard for ~2x cfDNA
+  mapq: 20             # readCounter MAPQ threshold (ichorCNA convention)
+  # Chromosomes without 'chr' prefix, matching the BAM headers
+  chrs: "c(1:22)"
+  # ichorCNA HMM priors
+  normal_states: "c(0.5,0.6,0.7,0.8,0.9,0.95,0.99)"
+  ploidy: "c(2,3)"
+  max_cn: 5
+  include_homd: "FALSE"
+  txne: 0.9999
+  txn_strength: 10000
+  plot_file_type: "pdf"
+
+resources:
+  # Memory cap per ichorCNA R job. Snakemake will not schedule more concurrent
+  # ichorCNA jobs than floor(resources.mem_mb / ichorcna_mem_mb) allows.
+  # Set to match available RAM / desired parallelism (e.g. 64000 MB / 8 jobs = 8000 per job).
+  ichorcna_mem_mb: 16000   # MB per job
+  mem_mb: 128000           # total RAM budget enforced by Snakemake
