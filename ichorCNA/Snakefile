@@ -67,3 +67,5 @@ rule all:
         expand("results/{sample}/{sample}.wig", sample=SAMPLES),
         expand("results/{sample}/{sample}.params.txt", sample=SAMPLES),
         expand("results/{sample}/{sample}.seg", sample=SAMPLES),
+        "results/tumor_fractions.csv",
+        "results/tumor_fractions.pdf",

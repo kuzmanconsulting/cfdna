@@ -17,13 +17,48 @@ Healthy normals (BH01, IH01–IH03) are excluded; no panel of normals is used.
 
 ```
 results/{sample}/
-├── {sample}.wig              # read-depth bins from readCounter (step 1)
-├── {sample}.params.txt       # estimated tumor fraction + ploidy
-├── {sample}.seg              # copy-number segments
-├── {sample}.cna.seg          # UCSC browser-compatible segments
-├── {sample}.correctedDepth.txt
-└── {sample}_*.pdf            # genome-wide CN plots
+├── {sample}.params.txt            # tumor fraction, ploidy, all solutions
+├── {sample}.seg.txt               # CNA segments — full table (use for analysis)
+├── {sample}.seg                   # CNA segments — IGV/GISTIC-compatible
+├── {sample}.cna.seg               # per-bin copy number and logR
+├── {sample}.correctedDepth.txt    # GC/mappability-corrected log2 depth per bin
+├── {sample}.wig                   # raw read counts per bin (readCounter output)
+├── {sample}.RData                 # full R workspace (all HMM objects)
+└── {sample}/                      # plots
+    ├── {sample}_genomeWide.pdf         # genome-wide CNA profile — best solution
+    ├── {sample}_genomeWide_all_sols.pdf# all initialisation solutions overlaid
+    ├── {sample}_genomeWide_n*-p*.pdf   # per-initialisation genome-wide profiles
+    ├── {sample}_CNA_chr*.pdf           # per-chromosome zoom-in (one per autosome)
+    ├── {sample}_correct.pdf            # GC/mappability correction diagnostics
+    ├── {sample}_bias.pdf               # depth vs. GC/mappability QC plots
+    └── {sample}_tpdf.pdf               # HMM emission (t-distribution) fits
 ```
+
+### File descriptions
+
+**Data files**
+
+| File | Description |
+|------|-------------|
+| `{sample}.params.txt` | **Start here.** Final tumor fraction and ploidy for the best-fit solution, plus GC-MAD (fit quality metric) and a table of all initialisation solutions with log-likelihoods. |
+| `{sample}.seg.txt` | Segment-level CNA table: coordinates, bin count, median logR, integer copy-number call, subclonal status, and GC-corrected copy number. Most complete format — use for downstream analysis. Not IGV-compatible. |
+| `{sample}.seg` | Same segments as `.seg.txt` in a simplified format compatible with IGV and GISTIC. |
+| `{sample}.cna.seg` | Bin-level (500 kb resolution) copy-number calls and logR — one row per bin rather than per segment. Use when bin-level resolution is needed. |
+| `{sample}.correctedDepth.txt` | GC- and mappability-corrected log2 read depth per 500 kb bin — the signal fed into the HMM, before segmentation. |
+| `{sample}.wig` | Raw read counts per 500 kb bin in WIG format. Direct output of `readCounter`; input to ichorCNA. |
+| `{sample}.RData` | Full R workspace saved after the run. Contains all intermediate HMM objects; needed for re-running with different parameters without recomputing WIGs. |
+
+**Plots**
+
+| File | Description |
+|------|-------------|
+| `{sample}_genomeWide.pdf` | **Main results plot.** Genome-wide copy-number profile for the best solution, annotated with tumor fraction and ploidy. |
+| `{sample}_genomeWide_all_sols.pdf` | All initialisations overlaid — use to judge whether the chosen solution is clearly best or ambiguous. |
+| `{sample}_genomeWide_n*-p*.pdf` | Genome-wide profile for each individual initialisation (normal fraction × ploidy combination). |
+| `{sample}_CNA_chr*.pdf` | Chromosome-level zoom-in: bin logR with segment calls overlaid. One PDF per autosome. |
+| `{sample}_correct.pdf` | Loess fit used for GC and mappability correction. Check if the genome-wide profile looks systematically biased. |
+| `{sample}_bias.pdf` | Depth vs. GC content and mappability scatter, before and after correction. |
+| `{sample}_tpdf.pdf` | Student's t mixture fits for each HMM emission state (neutral, gain, loss). |
 
 The key result is `{sample}.params.txt`: the `Tumor Fraction` field is the
 estimated ctDNA fraction for that sample.
@@ -63,9 +98,24 @@ Two rules per sample:
 
 ## Setup & running
 
-Uses the same Snakemake driver environment as the main pipeline
-(`cfdna-finale-snakemake/environment.yml`). Must be run from the host, not
-the container.
+Must be run from the host, not the container.
+
+**Runtime dependencies are not managed by conda.** Although `use-conda: true`
+is set in the Snakemake profile, neither the `ichorcna` nor `read_counter`
+rules carry a `conda:` directive — they rely on tools already present on the
+host system:
+
+| Tool | Expected on host |
+|------|-----------------|
+| `Rscript` + `ichorCNA` R package | system R |
+| `readCounter` | HMMcopy suite, in `$PATH` |
+| `python3` + `matplotlib` | conda env `workflow/envs/plots.yaml` (auto-built by Snakemake) |
+
+Install the ichorCNA R package once if not present:
+```r
+install.packages("BiocManager")
+BiocManager::install("ichorCNA")   # or devtools::install_github("broadinstitute/ichorCNA")
+```
 
 ```bash
 micromamba activate snakemake-env
