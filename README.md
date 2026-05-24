@@ -95,3 +95,46 @@ python3 utils/extract_fastq_from_bam.py \
     --input snyder2016_metadata_GSE_bam_subset.csv \
     --bamdir data/bam --outdir data/fastq --tmpdir data/tmp --threads 6
 ```
+
+## Pipelines
+
+### `cfdna-finale-snakemake/`
+
+A Snakemake pipeline for end-motif and fragment-length analysis of cfDNA BAMs, built on [FinaleToolkit](https://epifluidlab.github.io/FinaleToolkit/). Implements the research questions in `End-motif-analysis.md`.
+
+**Inputs:** original Snyder 2016 BAMs (`data/bam/`), an hg19 2-bit reference, and `samplesheet.csv`.
+
+**Per-sample outputs** are produced for five fragment-length classes (`all`, `I`/`II`: sub- vs. mono-nucleosomal split, `III`/`IV`: Snyder S-WPS and L-WPS windows):
+
+- 4-mer end-motif frequency tables and genome-wide MDS scores
+- Per-100 kb interval end-motifs and MDS (BED)
+- Full fragment-length histograms (1 bp bins) and distribution plots
+
+Each rule runs in its own conda environment resolved via `--use-conda`; the driver environment (`environment.yml`) contains only Snakemake and pandas.
+
+```bash
+# on host, from cfdna-finale-snakemake/
+bash launch.sh   # nohup; PID → snakemake.pid; log → snakemake.log
+bash stop.sh
+```
+
+See `cfdna-finale-snakemake/README.md` for full configuration details.
+
+### `ichorCNA/`
+
+A Snakemake pipeline for tumor-fraction and copy-number estimation from low-coverage cfDNA BAMs using [ichorCNA](https://github.com/broadinstitute/ichorCNA). Applied to 56 samples (48 cancer IC02–IC52 + 8 autoimmune IA01–IA08); healthy normals are excluded and no panel of normals is used.
+
+**Two rules per sample:**
+
+1. **`read_counter`** — bins the BAM into 500 kb read-depth windows (WIG) with `readCounter` (HMMcopy suite), MAPQ ≥ 20.
+2. **`ichorcna`** — runs the ichorCNA R script; GC-content and mappability WIGs are resolved from inside the conda-installed package, so no external reference files are needed.
+
+**Key output:** `results/{sample}/{sample}.params.txt` — the `Tumor Fraction` field is the estimated ctDNA fraction. Additional outputs include copy-number segment files and genome-wide CN plots (PDF).
+
+```bash
+# on host, from ichorCNA/
+bash launch.sh
+bash stop.sh
+```
+
+See `ichorCNA/README.md` for parameter details and setup notes.
