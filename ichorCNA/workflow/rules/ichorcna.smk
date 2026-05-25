@@ -57,6 +57,7 @@ rule gather_tumor_fractions:
 rule plot_tumor_fractions:
     input:
         csv="results/tumor_fractions.csv",
+        samplesheet=config["samplesheet"],
     output:
         pdf="results/tumor_fractions.pdf",
     conda:
@@ -65,7 +66,7 @@ rule plot_tumor_fractions:
         "work/logs/plot_tumor_fractions.log",
     shell:
         "python3 {workflow.basedir}/workflow/scripts/plot_tumor_fractions.py"
-        " {input.csv} {output.pdf} > {log} 2>&1"
+        " {input.csv} {input.samplesheet} {output.pdf} > {log} 2>&1"
 
 
 rule ichorcna:
