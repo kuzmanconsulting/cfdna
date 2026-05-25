@@ -233,48 +233,40 @@ if (!file.exists(mds_cache)) {
 
 mds_tbl <- mds_tbl |>
   left_join(samples |> select(sample_id, sample_group, library_type,
-                              disease_label),
+                              disease_label, coverage),
             by = "sample_id") |>
   mutate(label = if_else(sample_group == "healthy",
                          sample_id, paste(sample_id, disease_label)))
 
 mds_class <- mds_tbl |>
   filter(class %in% classes) |>
-  mutate(class = factor(class, levels = classes),
-         group_key = interaction(sample_group, library_type, drop = TRUE))
+  mutate(class = factor(class, levels = classes))
 
-dodge_w <- 0.7
-g_lvls  <- levels(mds_class$group_key)
+dodge_w <- 0.5
+g_lvls  <- levels(mds_class$sample_group)
 n_g     <- length(g_lvls)
 offsets <- setNames(-dodge_w/2 + (seq_len(n_g) - 0.5) * dodge_w / n_g, g_lvls)
 
 mds_class <- mds_class |>
-  mutate(x_num = as.integer(class) + offsets[as.character(group_key)])
-
-mds_all_ref <- mds_tbl |> filter(class == "all")
+  mutate(x_num = as.integer(class) + offsets[as.character(sample_group)])
 
 p_mds <- ggplot(mds_class, aes(x_num, mds,
                                color = sample_group, shape = library_type)) +
-  geom_hline(data = mds_all_ref,
-             aes(yintercept = mds, color = sample_group),
-             linetype = "dashed", linewidth = 0.3, alpha = 0.4,
-             show.legend = FALSE) +
-  geom_point(size = 2, stroke = 0.8) +
-  geom_text_repel(aes(label = label),
-                  size = 2, color = "grey40", alpha = 0.8,
-                  min.segment.length = 0, segment.size = 0.2,
-                  segment.color = "grey70", max.overlaps = Inf,
-                  box.padding = 0.3) +
+  geom_point(aes(alpha = coverage), size = 2, stroke = 0.8) +
+  scale_alpha_continuous(range = c(0.25, 1), trans = "log10") +
   scale_color_manual(values = group_colors) +
-  scale_shape_manual(values = c(SSP = 16, DSP = 17)) +
+  scale_shape_manual(values = c(SSP = 16, DSP = 17), guide = "none") +
   scale_x_continuous(breaks = seq_along(classes), labels = classes) +
+  scale_y_continuous(limits = c(0.90, 1)) +
+  facet_wrap(~ library_type, nrow = 1) +
   labs(x = "Length class", y = "Motif diversity score",
-       color = "Group", shape = "Library") +
+       color = "Group", alpha = "Coverage") +
   theme_bw(base_size = 11) +
-  theme(panel.grid.minor = element_blank())
+  theme(panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill = "grey92"))
 
 ggsave("analysis/mds_strip.png", p_mds,
-       width = 7, height = 5, dpi = 300)
+       width = 8, height = 4, dpi = 300)
 message("Wrote analysis/mds_strip.png")
 
 # Per-sample plots
@@ -306,3 +298,298 @@ for (s in samples$sample_id) {
 }
 message("Wrote per-sample 4-mer plots to ", per_sample_dir)
 }
+
+# ---------------------------------------------------------------------------
+# Per-motif log2 fold-change: cancer (median) vs appropriate healthy control
+#   a) DSP         → cancer IC49/50/51/52 vs IH01
+#   b) SSP ≥10×    → cancer IC15/17/20/35/37 vs IH02
+#   c) SSP <10×    → cancer IC10/23/28/32/33/46 vs IH03
+# ---------------------------------------------------------------------------
+message("\n--- Per-motif log2 fold-change ---")
+
+# Classify every sample into one of three strata
+motifs_strat <- motifs |>
+  mutate(stratum = case_when(
+    library_type == "DSP"                  ~ "DSP",
+    library_type == "SSP" & coverage >= 10 ~ "SSP_ge10",
+    library_type == "SSP" & coverage <  10 ~ "SSP_lt10"
+  ))
+
+strata_order  <- c("DSP", "SSP_ge10", "SSP_lt10")
+stratum_ctrl  <- c(DSP = "IH01", SSP_ge10 = "IH02", SSP_lt10 = "IH03")
+stratum_label <- c(DSP = "DSP", SSP_ge10 = "SSP ≥10×", SSP_lt10 = "SSP <10×")
+
+# Report stratum membership
+for (st in strata_order) {
+  ids <- motifs_strat |> filter(stratum == st, sample_group == "cancer") |>
+    pull(sample_id) |> unique() |> sort()
+  message(sprintf("  %s  ctrl=%s  cancer: %s",
+                  st, stratum_ctrl[st], paste(ids, collapse = ", ")))
+}
+
+# Compute log2FC per stratum
+lfc_all <- map(strata_order, function(st) {
+  d <- motifs_strat |> filter(stratum == st)
+
+  ctrl_freq <- d |>
+    filter(sample_group == "healthy") |>
+    group_by(class, kmer) |>
+    summarise(ctrl_freq = mean(freq), .groups = "drop")   # 1 ctrl sample; mean == identity
+
+  cancer_freq <- d |>
+    filter(sample_group == "cancer") |>
+    group_by(class, kmer, first_nuc) |>
+    summarise(cancer_median = median(freq), .groups = "drop")
+
+  cancer_freq |>
+    left_join(ctrl_freq, by = c("class", "kmer")) |>
+    mutate(
+      log2fc  = log2(cancer_median / ctrl_freq),
+      stratum = st
+    )
+}) |>
+  list_rbind() |>
+  mutate(
+    stratum = factor(stratum, levels = strata_order),
+    class   = factor(class,   levels = classes)
+  )
+
+# Warn about any non-finite values
+bad <- lfc_all |> filter(!is.finite(log2fc))
+if (nrow(bad)) {
+  warning(sprintf("%d non-finite log2FC values (zero freq in ctrl or cancer); dropped from plot",
+                  nrow(bad)))
+  lfc_all <- lfc_all |> filter(is.finite(log2fc))
+}
+
+make_lfc_bar <- function(st) {
+  d       <- lfc_all  |> filter(stratum == st)
+  ctrl_id <- stratum_ctrl[st]
+  lbl     <- stratum_label[st]
+  n_cancer <- motifs_strat |>
+    filter(stratum == st, sample_group == "cancer") |>
+    pull(sample_id) |> n_distinct()
+
+  ggplot(d, aes(kmer, log2fc, fill = first_nuc)) +
+    geom_col(width = 1, linewidth = 0) +
+    geom_hline(yintercept = 0, linewidth = 0.35, color = "grey30") +
+    scale_fill_manual(values = nuc_colors, name = "First nt") +
+    scale_x_discrete(breaks = NULL) +
+    facet_grid(class ~ ., scales = "free_y") +
+    labs(
+      title = sprintf("%s — cancer median (n=%d) vs %s (healthy control)",
+                      lbl, n_cancer, ctrl_id),
+      x = "4-mer motif (256, sorted alphabetically)",
+      y = "log₂ FC (cancer / healthy)"
+    ) +
+    theme_bw(base_size = 11) +
+    theme(
+      panel.grid       = element_blank(),
+      axis.ticks.x     = element_blank(),
+      strip.background = element_rect(fill = "grey92")
+    )
+}
+
+out_files <- c(DSP = "lfc_dsp.png", SSP_ge10 = "lfc_ssp_ge10.png", SSP_lt10 = "lfc_ssp_lt10.png")
+for (st in strata_order) {
+  p <- make_lfc_bar(st)
+  ggsave(file.path("analysis", out_files[st]), p, width = 8, height = 7, dpi = 300)
+  message("Wrote analysis/", out_files[st])
+}
+
+# ---------------------------------------------------------------------------
+# PCA — all 18 samples, length classes I–IV concatenated as features
+#
+# Feature matrix: 18 samples × 1024 columns (256 kmers × 4 classes).
+# Concatenation encodes fragment length structurally: short-class (I, III)
+# and long-class (II, IV) motif vectors occupy distinct columns so that
+# length-specific signals pull samples along different PC axes.
+# center=TRUE, scale.=FALSE — features are already commensurate frequencies.
+# ---------------------------------------------------------------------------
+message("\n--- PCA: all samples, length classes I–IV concatenated ---")
+
+# Wide feature matrix: one row per sample, one column per "kmer_class"
+pca_wide <- motifs |>
+  mutate(feature = paste0(as.character(kmer), "_", as.character(class))) |>
+  select(sample_id, feature, freq) |>
+  pivot_wider(names_from = feature, values_from = freq)
+
+mat_pca <- pca_wide |> select(-sample_id) |> as.matrix()
+rownames(mat_pca) <- pca_wide$sample_id
+stopifnot(!anyNA(mat_pca))
+
+pca_res <- prcomp(mat_pca, center = TRUE, scale. = FALSE)
+pct_var  <- round(100 * pca_res$sdev^2 / sum(pca_res$sdev^2), 1)
+
+message(sprintf("  PC1 = %.1f%%  PC2 = %.1f%%  PC3 = %.1f%%",
+                pct_var[1], pct_var[2], pct_var[3]))
+
+# Sample scores
+scores_pca <- as_tibble(pca_res$x[, 1:2], rownames = "sample_id") |>
+  left_join(samples |> select(sample_id, sample_group, library_type, coverage),
+            by = "sample_id")
+
+# Top loadings by vector magnitude in PC1–PC2 plane, scaled to sample score range
+top_n_load <- 12L
+load_scale <- max(abs(pca_res$x[, 1:2])) / max(abs(pca_res$rotation[, 1:2]))
+
+top_idx <- order(
+  sqrt(pca_res$rotation[, 1]^2 + pca_res$rotation[, 2]^2),
+  decreasing = TRUE
+)[seq_len(top_n_load)]
+
+loadings_pca <- as_tibble(pca_res$rotation[top_idx, 1:2], rownames = "feature") |>
+  mutate(
+    across(c(PC1, PC2), \(x) x * load_scale),
+    kmer  = substr(feature, 1, 4),              # always exactly 4 chars
+    class = substr(feature, 6, nchar(feature))  # drop "KMER_"
+  )
+
+p_pca_all <- ggplot() +
+  # Loading arrows (grey; class annotated in label)
+  geom_segment(
+    data      = loadings_pca,
+    aes(x = 0, y = 0, xend = PC1, yend = PC2),
+    arrow     = arrow(length = unit(0.12, "cm"), type = "closed"),
+    linewidth = 0.35, color = "grey55", alpha = 0.85
+  ) +
+  geom_text_repel(
+    data               = loadings_pca,
+    aes(PC1, PC2, label = paste0(kmer, " (", class, ")")),
+    size               = 2.1, color = "grey30",
+    min.segment.length = 0, segment.size = 0.2, segment.color = "grey70",
+    max.overlaps       = Inf, box.padding = 0.2
+  ) +
+  # Sample points
+  geom_point(
+    data = scores_pca,
+    aes(PC1, PC2, color = sample_group, shape = library_type, alpha = coverage),
+    size = 3, stroke = 0.7
+  ) +
+  geom_text_repel(
+    data               = scores_pca,
+    aes(PC1, PC2, label = sample_id, color = sample_group),
+    size               = 2.6, fontface = "bold", show.legend = FALSE,
+    min.segment.length = 0, segment.size = 0.2, segment.color = "grey70",
+    max.overlaps       = Inf, box.padding = 0.35
+  ) +
+  scale_color_manual(values = group_colors, name = "Group") +
+  scale_shape_manual(values = c(SSP = 16, DSP = 17), name = "Library") +
+  scale_alpha_continuous(range = c(0.25, 1), trans = "log10", name = "Coverage") +
+  labs(
+    title = sprintf("End-motif PCA — all %d samples, classes I–IV concatenated (1024 features)",
+                    nrow(scores_pca)),
+    x = sprintf("PC1 (%.1f%%)", pct_var[1]),
+    y = sprintf("PC2 (%.1f%%)", pct_var[2])
+  ) +
+  theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave("analysis/pca_all_samples.png", p_pca_all, width = 7, height = 6, dpi = 300)
+message("Wrote analysis/pca_all_samples.png")
+
+# ---------------------------------------------------------------------------
+# PCA — per library type: SSP and DSP side by side (patchwork)
+#
+# Each PCA is fitted independently on its library subset so that PC axes
+# reflect within-library variance only. The dominant between-library split
+# (DSP vs SSP strand-selection effect) is removed by design, letting the
+# cancer vs healthy signal occupy the principal axes.
+# ---------------------------------------------------------------------------
+message("\n--- PCA: per-library (SSP | DSP) ---")
+
+top_n_load_lib <- 10L
+
+# Shared coverage scale — identical limits + breaks → patchwork merges the legends
+cov_limits <- c(1, 200)
+cov_breaks <- c(2, 10, 30, 100)
+
+make_lib_pca <- function(lib, show_tf_legend = TRUE) {
+  d_wide <- motifs |>
+    filter(as.character(library_type) == lib) |>
+    mutate(feature = paste0(as.character(kmer), "_", as.character(class))) |>
+    select(sample_id, feature, freq) |>
+    pivot_wider(names_from = feature, values_from = freq)
+
+  mat <- d_wide |> select(-sample_id) |> as.matrix()
+  rownames(mat) <- d_wide$sample_id
+
+  pca <- prcomp(mat, center = TRUE, scale. = FALSE)
+  pct <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+
+  message(sprintf("  %s  PC1=%.1f%%  PC2=%.1f%%  PC3=%.1f%%  n=%d",
+                  lib, pct[1], pct[2], pct[3], nrow(mat)))
+
+  scores <- as_tibble(pca$x[, 1:2], rownames = "sample_id") |>
+    left_join(samples |> select(sample_id, sample_group, library_type,
+                                coverage, tumor_fraction),
+              by = "sample_id")
+
+  load_scale <- max(abs(pca$x[, 1:2])) / max(abs(pca$rotation[, 1:2]))
+  top_idx <- order(
+    sqrt(pca$rotation[, 1]^2 + pca$rotation[, 2]^2),
+    decreasing = TRUE
+  )[seq_len(top_n_load_lib)]
+
+  loadings <- as_tibble(pca$rotation[top_idx, 1:2], rownames = "feature") |>
+    mutate(
+      across(c(PC1, PC2), \(x) x * load_scale),
+      kmer  = substr(feature, 1, 4),
+      class = substr(feature, 6, nchar(feature))
+    )
+
+  ggplot() +
+    geom_segment(
+      data      = loadings,
+      aes(x = 0, y = 0, xend = PC1, yend = PC2),
+      arrow     = arrow(length = unit(0.12, "cm"), type = "closed"),
+      linewidth = 0.35, color = "grey55", alpha = 0.85
+    ) +
+    geom_text_repel(
+      data               = loadings,
+      aes(PC1, PC2, label = paste0(kmer, " (", class, ")")),
+      size               = 2.1, color = "grey30",
+      min.segment.length = 0, segment.size = 0.2, segment.color = "grey70",
+      max.overlaps       = Inf, box.padding = 0.2
+    ) +
+    geom_point(
+      data = scores,
+      aes(PC1, PC2, color = sample_group, shape = library_type,
+          alpha = coverage, size = tumor_fraction),
+      stroke = 0.7
+    ) +
+    geom_text_repel(
+      data               = scores,
+      aes(PC1, PC2, label = sample_id, color = sample_group),
+      size               = 2.6, fontface = "bold", show.legend = FALSE,
+      min.segment.length = 0, segment.size = 0.2, segment.color = "grey70",
+      max.overlaps       = Inf, box.padding = 0.35
+    ) +
+    scale_color_manual(values = group_colors, name = "Group") +
+    scale_shape_manual(values = c(SSP = 16, DSP = 17), guide = "none") +
+    scale_alpha_continuous(range = c(0.25, 1), trans = "log10", name = "Coverage",
+                           limits = cov_limits, breaks = cov_breaks) +
+    scale_size_continuous(range = c(1.5, 7), name = "Tumor fraction",
+                          labels = scales::label_percent(accuracy = 1),
+                          guide  = if (show_tf_legend) "legend" else "none") +
+    labs(
+      title = sprintf("%s  (n = %d)", lib, nrow(scores)),
+      x     = sprintf("PC1 (%.1f%%)", pct[1]),
+      y     = sprintf("PC2 (%.1f%%)", pct[2])
+    ) +
+    theme_bw(base_size = 11) +
+    theme(panel.grid.minor = element_blank())
+}
+
+p_ssp <- make_lib_pca("SSP")
+p_dsp <- make_lib_pca("DSP", show_tf_legend = FALSE)
+
+p_pca_libs <- (p_ssp | p_dsp) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title = "End-motif PCA by library — classes I–IV concatenated (1024 features)"
+  ) &
+  theme(legend.position = "right")
+
+ggsave("analysis/pca_by_library.png", p_pca_libs, width = 14, height = 6, dpi = 300)
+message("Wrote analysis/pca_by_library.png")
