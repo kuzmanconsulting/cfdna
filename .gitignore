@@ -1,4 +1,6 @@
 *.pdf
+*.png
+*.tsv
 data/*
 
 *.log
@@ -7,8 +9,5 @@ data/*
 refs/*
 
 mmc2.xlsx
-
-analysis/*.png
-analysis/*.tsv
 
 .claude/
