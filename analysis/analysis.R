@@ -209,6 +209,74 @@ ggsave("analysis/motif_freq_lt10.png", p_bot_mot,
        width = 7, height = 7, dpi = 300)
 message("Wrote analysis/motif_freq_lt10.png")
 
+# ---------------------------------------------------------------------------
+# MDS (normalized Shannon entropy) strip plot
+# ---------------------------------------------------------------------------
+mds_cache <- file.path(cache_dir, "mds_I_IV_all.tsv")
+
+if (!file.exists(mds_cache)) {
+  message("Building MDS cache: ", mds_cache)
+  read_mds <- function(s, cls) {
+    f <- sprintf("cfdna-finale-snakemake/results/%s/end_motifs/%s.%s.mds.txt",
+                 s, s, cls)
+    if (!file.exists(f)) { warning("missing: ", f); return(NA_real_) }
+    as.numeric(readLines(f, n = 1))
+  }
+  mds_tbl <- tidyr::expand_grid(sample_id = samples$sample_id,
+                                class = c(classes, "all")) |>
+    mutate(mds = map2_dbl(sample_id, class, read_mds))
+  write_tsv(mds_tbl, mds_cache)
+} else {
+  message("Using cached MDS file: ", mds_cache)
+  mds_tbl <- read_tsv(mds_cache, show_col_types = FALSE)
+}
+
+mds_tbl <- mds_tbl |>
+  left_join(samples |> select(sample_id, sample_group, library_type,
+                              disease_label),
+            by = "sample_id") |>
+  mutate(label = if_else(sample_group == "healthy",
+                         sample_id, paste(sample_id, disease_label)))
+
+mds_class <- mds_tbl |>
+  filter(class %in% classes) |>
+  mutate(class = factor(class, levels = classes),
+         group_key = interaction(sample_group, library_type, drop = TRUE))
+
+dodge_w <- 0.7
+g_lvls  <- levels(mds_class$group_key)
+n_g     <- length(g_lvls)
+offsets <- setNames(-dodge_w/2 + (seq_len(n_g) - 0.5) * dodge_w / n_g, g_lvls)
+
+mds_class <- mds_class |>
+  mutate(x_num = as.integer(class) + offsets[as.character(group_key)])
+
+mds_all_ref <- mds_tbl |> filter(class == "all")
+
+p_mds <- ggplot(mds_class, aes(x_num, mds,
+                               color = sample_group, shape = library_type)) +
+  geom_hline(data = mds_all_ref,
+             aes(yintercept = mds, color = sample_group),
+             linetype = "dashed", linewidth = 0.3, alpha = 0.4,
+             show.legend = FALSE) +
+  geom_point(size = 2, stroke = 0.8) +
+  geom_text_repel(aes(label = label),
+                  size = 2, color = "grey40", alpha = 0.8,
+                  min.segment.length = 0, segment.size = 0.2,
+                  segment.color = "grey70", max.overlaps = Inf,
+                  box.padding = 0.3) +
+  scale_color_manual(values = group_colors) +
+  scale_shape_manual(values = c(SSP = 16, DSP = 17)) +
+  scale_x_continuous(breaks = seq_along(classes), labels = classes) +
+  labs(x = "Length class", y = "Motif diversity score",
+       color = "Group", shape = "Library") +
+  theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave("analysis/mds_strip.png", p_mds,
+       width = 7, height = 5, dpi = 300)
+message("Wrote analysis/mds_strip.png")
+
 # Per-sample plots
 if (isTRUE(config$skip_per_spl_4mer_freq)) {
   message("Skipping per-sample 4-mer plots (config$skip_per_spl_4mer_freq = TRUE)")
