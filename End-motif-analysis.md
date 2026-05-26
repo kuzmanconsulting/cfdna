@@ -156,10 +156,7 @@ Fragment length classes referenced below:
 - III 35–80
 - IV 120–180
 
-> Note: all four classes (plus `all`) are produced by the pipeline —
-> `length_classes` in `config.yaml` is keyed directly to these. Classes
-> overlap by design (I⊃III, II⊃IV): they target different questions, not a
-> partition of fragment lengths.
+> Classes overlap by design (I⊃III, II⊃IV): they target different questions, not a partition of fragment lengths.
 
 1. Do 4-mers in I–IV differ between cancer and normal?
 2. Do we see a difference in 2× vs 30× cancers (similar TF, same cancer type)?

@@ -2,6 +2,7 @@
 *.png
 *.tsv
 data/*
+analysis/*.csv
 
 *.log
 *.pid

@@ -61,10 +61,10 @@ message("\nWrote analysis/coverage_vs_tf.png")
 # Fragment length ridgeplot (35-500 bp)
 # ---------------------------------------------------------------------------
 cache_dir  <- "analysis/.cache"
+dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
 cache_file <- file.path(cache_dir, "frag_lengths_35_500.tsv")
 
 if (!file.exists(cache_file)) {
-  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
   message("Building frag-length cache: ", cache_file)
   frag <- map(samples$sample_id, \(s) {
     f <- sprintf("cfdna-finale-snakemake/results/%s/frag_lengths/%s.frag_length_bins.tsv", s, s)
@@ -593,3 +593,370 @@ p_pca_libs <- (p_ssp | p_dsp) +
 
 ggsave("analysis/pca_by_library.png", p_pca_libs, width = 14, height = 6, dpi = 300)
 message("Wrote analysis/pca_by_library.png")
+
+# ---------------------------------------------------------------------------
+# SSP subset: IC17, IC37, IC20, IC35 vs IH02
+#   Criteria: SSP library, ~30× coverage, ~0.2 tumor fraction
+#   Analyses:
+#     A) Median 4-mer log2FC across the 4 cancer samples (all + I–IV)
+#     B) Per-sample log2FC — full 256-kmer barplots (all + I–IV)
+#     C) Concordance report + dot plot of fully-concordant motifs
+# ---------------------------------------------------------------------------
+message("\n--- SSP subset: IC17/IC37/IC20/IC35 vs IH02 ---")
+
+ssp_sub_cancer  <- c("IC17", "IC37", "IC20", "IC35")
+ssp_sub_ctrl    <- "IH02"
+ssp_sub_ids     <- c(ssp_sub_ctrl, ssp_sub_cancer)
+ssp_all_classes <- c("all", "I", "II", "III", "IV")
+
+# ---- 1. Cache ----------------------------------------------------------
+ssp_sub_cache <- file.path(cache_dir, "end_motifs_ssp_subset_all5.tsv")
+
+if (!file.exists(ssp_sub_cache)) {
+  message("Building SSP subset motif cache: ", ssp_sub_cache)
+  ssp_sub_motifs <- tidyr::expand_grid(sample_id = ssp_sub_ids,
+                                       class     = ssp_all_classes) |>
+    pmap(\(sample_id, class) {
+      f <- sprintf("cfdna-finale-snakemake/results/%s/end_motifs/%s.%s.tsv",
+                   sample_id, sample_id, class)
+      read_tsv(f, col_names = c("kmer", "freq"), col_types = "cd") |>
+        mutate(sample_id = sample_id, class = class)
+    }) |> list_rbind()
+  write_tsv(ssp_sub_motifs, ssp_sub_cache)
+} else {
+  message("Using cached SSP subset motifs: ", ssp_sub_cache)
+  ssp_sub_motifs <- read_tsv(ssp_sub_cache, show_col_types = FALSE)
+}
+
+ssp_sub_motifs <- ssp_sub_motifs |>
+  mutate(
+    class     = factor(class, levels = ssp_all_classes),
+    first_nuc = substr(kmer, 1, 1),
+    kmer      = factor(kmer, levels = sort(unique(kmer)))
+  )
+
+# ---- 2. Per-sample log2FC (cancer vs IH02) ----------------------------
+ctrl_motifs <- ssp_sub_motifs |>
+  filter(sample_id == ssp_sub_ctrl) |>
+  select(class, kmer, ctrl_freq = freq)
+
+persample_lfc_sub <- ssp_sub_motifs |>
+  filter(sample_id %in% ssp_sub_cancer) |>
+  left_join(ctrl_motifs, by = c("class", "kmer")) |>
+  mutate(log2fc = log2(freq / ctrl_freq))
+
+bad_sub <- persample_lfc_sub |> filter(!is.finite(log2fc))
+if (nrow(bad_sub))
+  warning(sprintf("%d non-finite log2FC values in SSP subset; dropped", nrow(bad_sub)))
+persample_lfc_sub <- persample_lfc_sub |> filter(is.finite(log2fc))
+
+# ---- A. Median log2FC barplot ------------------------------------------
+median_lfc_sub <- persample_lfc_sub |>
+  group_by(class, kmer, first_nuc) |>
+  summarise(log2fc = median(log2fc), .groups = "drop")
+
+p_ssp_median <- ggplot(median_lfc_sub, aes(kmer, log2fc, fill = first_nuc)) +
+  geom_col(width = 1, linewidth = 0) +
+  geom_hline(yintercept = 0, linewidth = 0.35, color = "grey30") +
+  scale_fill_manual(values = nuc_colors, name = "First nt") +
+  scale_x_discrete(breaks = NULL) +
+  facet_grid(class ~ ., scales = "free_y") +
+  labs(
+    title = sprintf("SSP subset: median cancer log₂FC vs %s  (n=%d: %s)",
+                    ssp_sub_ctrl, length(ssp_sub_cancer),
+                    paste(ssp_sub_cancer, collapse = ", ")),
+    x     = "4-mer motif (256, sorted alphabetically)",
+    y     = "Median log₂ FC (cancer / IH02)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(panel.grid       = element_blank(),
+        axis.ticks.x     = element_blank(),
+        strip.background = element_rect(fill = "grey92"))
+
+ggsave("analysis/lfc_ssp_subset_median.png", p_ssp_median,
+       width = 8, height = 10, dpi = 300)
+message("Wrote analysis/lfc_ssp_subset_median.png")
+
+# ---- B. Per-sample log2FC grid (4 samples × 5 classes) ----------------
+# Build informative row-strip labels
+sub_meta <- samples |>
+  filter(sample_id %in% ssp_sub_cancer) |>
+  mutate(
+    strip_label = sprintf("%s\n%s\n%.0f×, TF≈%.0f%%",
+                          sample_id, disease_label,
+                          coverage, tumor_fraction * 100)
+  ) |>
+  arrange(match(sample_id, ssp_sub_cancer))   # keep consistent order
+
+strip_levels <- sub_meta$strip_label
+
+persample_lfc_sub2 <- persample_lfc_sub |>
+  left_join(sub_meta |> select(sample_id, strip_label), by = "sample_id") |>
+  mutate(strip_label = factor(strip_label, levels = strip_levels))
+
+p_ssp_persample <- ggplot(persample_lfc_sub2,
+                          aes(kmer, log2fc, fill = first_nuc)) +
+  geom_col(width = 1, linewidth = 0) +
+  geom_hline(yintercept = 0, linewidth = 0.25, color = "grey30") +
+  scale_fill_manual(values = nuc_colors, name = "First nt") +
+  scale_x_discrete(breaks = NULL) +
+  facet_grid(strip_label ~ class, scales = "free_y") +
+  labs(
+    x = "4-mer motif (256, sorted alphabetically)",
+    y = "log₂ FC (vs IH02)"
+  ) +
+  theme_bw(base_size = 10) +
+  theme(panel.grid        = element_blank(),
+        axis.ticks.x      = element_blank(),
+        strip.background  = element_rect(fill = "grey92"),
+        strip.text.y      = element_text(size = 7.5))
+
+ggsave("analysis/lfc_ssp_subset_per_sample.png", p_ssp_persample,
+       width = 12, height = 7, dpi = 300)
+message("Wrote analysis/lfc_ssp_subset_per_sample.png")
+
+# ---- C. Concordance ----------------------------------------------------
+concordance_sub <- persample_lfc_sub |>
+  group_by(class, kmer, first_nuc) |>
+  summarise(
+    n_up       = sum(log2fc > 0),
+    n_down     = sum(log2fc < 0),
+    n_total    = n(),
+    median_lfc = median(log2fc),
+    sd_lfc     = sd(log2fc),
+    .groups    = "drop"
+  ) |>
+  mutate(
+    n_concord     = pmax(n_up, n_down),
+    fully_concord = n_concord == length(ssp_sub_cancer),
+    direction     = if_else(n_up >= n_down, "up", "down")
+  )
+
+message("\n  Concordant motifs (all 4 samples agree on direction):")
+for (cls in levels(concordance_sub$class)) {
+  hits <- concordance_sub |> filter(class == cls, fully_concord)
+  n_fc <- nrow(hits)
+  top_up <- hits |> filter(direction == "up")  |> arrange(desc(median_lfc)) |> head(8)
+  top_dn <- hits |> filter(direction == "down") |> arrange(median_lfc)       |> head(8)
+  message(sprintf("  class %-4s: %3d/256 fully concordant", cls, n_fc))
+  if (nrow(top_up)) message("    Up:   ",
+    paste(sprintf("%s(%.3f)", top_up$kmer, top_up$median_lfc), collapse = "  "))
+  if (nrow(top_dn)) message("    Down: ",
+    paste(sprintf("%s(%.3f)", top_dn$kmer, top_dn$median_lfc), collapse = "  "))
+}
+
+# ---- C-csv. Concordant motifs wide CSV ---------------------------------
+concord_col_order <- c(
+  paste0("fq_", c("all", "I", "II", "III", "IV"), "_lfc_dn"),
+  paste0("fq_", c("all", "I", "II", "III", "IV"), "_lfc_up")
+)
+
+concord_csv <- concordance_sub |>
+  filter(fully_concord) |>
+  mutate(col_name = paste0("fq_", as.character(class), "_lfc_",
+                           if_else(direction == "up", "up", "dn"))) |>
+  select(kmer, col_name, median_lfc) |>
+  pivot_wider(names_from = col_name, values_from = median_lfc)
+
+# Ensure every expected column is present even when no motif is concordant
+# in a particular class/direction
+for (col in concord_col_order)
+  if (!col %in% names(concord_csv)) concord_csv[[col]] <- NA_real_
+
+concord_csv <- concord_csv |>
+  rename(motif = kmer) |>
+  select(motif, all_of(concord_col_order))
+
+write_csv(concord_csv, "analysis/ssp_subset_concordant_motifs.csv", na = "")
+message(sprintf("Wrote analysis/ssp_subset_concordant_motifs.csv  (%d motifs)",
+                nrow(concord_csv)))
+
+if (nrow(concord_csv) == 0) {
+  message("  No fully concordant motifs found — skipping concordant dot plot")
+} else {
+
+# Concordant motif dot plot — top 15 up + top 15 down per class
+top_concord <- concordance_sub |>
+  filter(fully_concord) |>
+  group_by(class, direction) |>
+  slice_max(abs(median_lfc), n = 15, with_ties = FALSE) |>
+  ungroup()
+
+# Per-class ordered factor for y-axis (ordered by median_lfc within each class)
+# Use "class::kmer" prefix so global factor levels respect per-class ordering
+kmer_levels <- top_concord |>
+  arrange(class, median_lfc) |>
+  mutate(ck = paste0(as.character(class), "::", as.character(kmer))) |>
+  pull(ck)
+
+concord_pts <- persample_lfc_sub |>
+  semi_join(top_concord, by = c("class", "kmer")) |>
+  mutate(ck = factor(paste0(as.character(class), "::", as.character(kmer)),
+                     levels = kmer_levels))
+
+concord_med <- top_concord |>
+  mutate(ck = factor(paste0(as.character(class), "::", as.character(kmer)),
+                     levels = kmer_levels))
+
+sample_colors_sub <- setNames(
+  c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3"),   # 4 Set1-style hues
+  ssp_sub_cancer
+)
+sample_labels_sub <- setNames(
+  paste0(sub_meta$sample_id, " (", sub_meta$disease_label, ")"),
+  sub_meta$sample_id
+)
+
+p_concord <- ggplot() +
+  # zero line
+  geom_vline(xintercept = 0, linewidth = 0.3, color = "grey50") +
+  # spine from 0 to median
+  geom_segment(data = concord_med,
+               aes(x = 0, xend = median_lfc, y = ck, yend = ck),
+               linewidth = 0.5, color = "grey60") +
+  # individual sample points
+  geom_point(data  = concord_pts,
+             aes(x = log2fc, y = ck, color = sample_id),
+             size  = 2, alpha = 0.85) +
+  # median marker
+  geom_point(data  = concord_med,
+             aes(x = median_lfc, y = ck),
+             shape = 21, size = 3, fill = "grey25", color = "white", stroke = 0.5) +
+  scale_color_manual(values = sample_colors_sub, labels = sample_labels_sub,
+                     name = "Sample") +
+  scale_y_discrete(labels = \(x) sub(".*::", "", x)) +
+  facet_wrap(~ class, nrow = 1, scales = "free_y") +
+  labs(
+    title = sprintf(
+      "Concordant 4-mer shifts vs IH02 — top 15 up/down per class (4/4 samples agree)"),
+    x     = "log₂ FC (vs IH02)",
+    y     = NULL
+  ) +
+  theme_bw(base_size = 11) +
+  theme(panel.grid.major.x = element_line(linewidth = 0.2, color = "grey88"),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor   = element_blank(),
+        strip.background   = element_rect(fill = "grey92"),
+        axis.text.y        = element_text(family = "mono", size = 8))
+
+ggsave("analysis/lfc_ssp_subset_concordant.png", p_concord,
+       width = 14, height = 7, dpi = 300)
+message("Wrote analysis/lfc_ssp_subset_concordant.png")
+
+} # end if (nrow(concord_csv) > 0)
+
+# ---------------------------------------------------------------------------
+# Class III vs IV concordant motif comparison
+#   III = 35–80 bp (sub-nucleosomal), IV = 120–180 bp (mono-nucleosomal)
+#   Question: which motifs shift concordantly in one size class but not the
+#   other, and do any flip direction between short and long fragments?
+# ---------------------------------------------------------------------------
+message("\n--- Class III vs IV concordant motif comparison ---")
+
+iii_iv <- concordance_sub |>
+  filter(class %in% c("III", "IV")) |>
+  select(class, kmer, first_nuc, median_lfc, fully_concord, direction) |>
+  pivot_wider(
+    names_from  = class,
+    values_from = c(median_lfc, fully_concord, direction),
+    names_sep   = "_"
+  ) |>
+  mutate(
+    concord_III = replace_na(fully_concord_III, FALSE),
+    concord_IV  = replace_na(fully_concord_IV,  FALSE),
+    same_dir    = direction_III == direction_IV,
+    membership  = case_when(
+      concord_III & concord_IV & !same_dir ~ "opposite direction",
+      concord_III & concord_IV             ~ "III ∩ IV (same dir)",
+      concord_III                          ~ "III only",
+      concord_IV                           ~ "IV only",
+      TRUE                                 ~ "neither"
+    ) |> factor(levels = c("opposite direction", "III ∩ IV (same dir)",
+                           "III only", "IV only", "neither"))
+  )
+
+# Console report
+n_iii     <- sum(iii_iv$concord_III)
+n_iv      <- sum(iii_iv$concord_IV)
+n_shared  <- sum(iii_iv$concord_III & iii_iv$concord_IV)
+n_opp     <- sum(iii_iv$membership == "opposite direction")
+
+message(sprintf("  III concordant : %d/256", n_iii))
+message(sprintf("  IV  concordant : %d/256", n_iv))
+message(sprintf("  Shared (III∩IV): %d  (%d same direction, %d opposite)",
+                n_shared, n_shared - n_opp, n_opp))
+message(sprintf("  III only       : %d", sum(iii_iv$membership == "III only")))
+message(sprintf("  IV  only       : %d", sum(iii_iv$membership == "IV only")))
+
+fmt_motifs <- function(d, lfc_col) {
+  d |> arrange(desc(abs(.data[[lfc_col]]))) |>
+    mutate(s = sprintf("%s(%.3f)", kmer, .data[[lfc_col]])) |>
+    pull(s) |> paste(collapse = "  ")
+}
+
+for (grp in c("III only", "IV only", "III ∩ IV (same dir)", "opposite direction")) {
+  d <- iii_iv |> filter(membership == grp)
+  if (nrow(d) == 0) next
+  lfc_col <- if (grp == "IV only") "median_lfc_IV" else "median_lfc_III"
+  message(sprintf("\n  %s (%d motifs):", grp, nrow(d)))
+  for (dir in c("up", "down")) {
+    dd <- d |> filter(if (grp == "IV only") direction_IV == dir else direction_III == dir)
+    if (nrow(dd)) message(sprintf("    %s: %s", dir, fmt_motifs(dd, lfc_col)))
+  }
+}
+
+# Scatter: all 256 motifs, median_lfc_III vs median_lfc_IV
+memb_colors <- c(
+  "opposite direction"     = "#B2182B",
+  "III ∩ IV (same dir)"   = "#907396ff",
+  "III only"               = "#2166AC",
+  "IV only"                = "#E08214",
+  "neither"                = "grey82"
+)
+memb_sizes <- c(
+  "opposite direction"    = 3,
+  "III ∩ IV (same dir)"  = 2.5,
+  "III only"              = 2,
+  "IV only"               = 2,
+  "neither"               = 1
+)
+memb_alpha <- c(
+  "opposite direction"    = 1,
+  "III ∩ IV (same dir)"  = 1,
+  "III only"              = 0.9,
+  "IV only"               = 0.9,
+  "neither"               = 0.35
+)
+
+label_data_iii_iv <- iii_iv |> filter(membership != "neither")
+
+p_iii_iv <- ggplot(iii_iv, aes(median_lfc_III, median_lfc_IV, color = membership)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, color = "grey50") +
+  geom_vline(xintercept = 0, linewidth = 0.3, color = "grey50") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              linewidth = 0.3, color = "grey60") +
+  geom_point(aes(size = membership, alpha = membership)) +
+  geom_text_repel(
+    data               = label_data_iii_iv,
+    aes(label         = as.character(kmer)),
+    size               = 2.6, family = "mono",
+    min.segment.length = 0, segment.size = 0.2, segment.color = "grey60",
+    max.overlaps       = Inf, box.padding = 0.25
+  ) +
+  scale_x_continuous(limits = c(-0.7, 0.7)) +
+  scale_y_continuous(limits = c(-0.7, 0.7)) +
+  scale_color_manual(values = memb_colors, name = NULL) +
+  scale_size_manual(values  = memb_sizes,  guide = "none") +
+  scale_alpha_manual(values = memb_alpha,  guide = "none") +
+  labs(
+    title = "Class III vs IV: concordant cancer motif shifts (SSP subset vs IH02)",
+    x     = "Median log₂ FC — class III (35–80 bp)",
+    y     = "Median log₂ FC — class IV (120–180 bp)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        legend.position  = "right")
+
+ggsave("analysis/lfc_ssp_subset_III_vs_IV.png", p_iii_iv,
+       width = 8, height = 7, dpi = 300)
+message("\nWrote analysis/lfc_ssp_subset_III_vs_IV.png")
