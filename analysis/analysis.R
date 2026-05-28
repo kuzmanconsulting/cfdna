@@ -1287,3 +1287,205 @@ p_ssp_mds <- ggplot() +
 ggsave("analysis/ssp_subset/mds_ssp_subset.png", p_ssp_mds,
        width = 8, height = 5, dpi = 300)
 message("Wrote analysis/ssp_subset/mds_ssp_subset.png")
+
+# ---------------------------------------------------------------------------
+# Per-sample log2FC scatter: class IV vs III (panel A) + class II vs I (panel B)
+#   Each cancer sample vs its stratum control (same logic as lfc_dsp/ssp plots)
+#     DSP           → ctrl IH01
+#     SSP ≥10×      → ctrl IH02
+#     SSP <10×      → ctrl IH03
+#   Output: analysis/per_spl_lfc_scatters/lfc_cls_scatter_<samplename>.png
+# ---------------------------------------------------------------------------
+message("\n--- Per-sample log2FC class scatter plots ---")
+
+dir.create("analysis/per_spl_lfc_scatters/IIIvsIV_IvsII", showWarnings = FALSE, recursive = TRUE)
+
+top_label_n_scatter <- 20L   # label top N most extreme points per panel
+
+cancer_samples <- samples |> filter(sample_group == "cancer")
+
+walk(cancer_samples$sample_id, function(s) {
+  srow <- samples |> filter(sample_id == s)
+  lt   <- as.character(srow$library_type)
+  cv   <- srow$coverage
+  tf   <- srow$tumor_fraction
+  dl   <- srow$disease_label
+
+  stratum  <- if (lt == "DSP") "DSP" else if (cv >= 10) "SSP_ge10" else "SSP_lt10"
+  ctrl_id  <- stratum_ctrl[stratum]
+  lib_name <- stratum_label[stratum]
+
+  ctrl_f <- motifs |>
+    filter(sample_id == ctrl_id, as.character(class) %in% c("I","II","III","IV")) |>
+    select(class, kmer, ctrl_freq = freq)
+
+  spl_wide <- motifs |>
+    filter(sample_id == s, as.character(class) %in% c("I","II","III","IV")) |>
+    left_join(ctrl_f, by = c("class", "kmer")) |>
+    mutate(log2fc = log2(freq / ctrl_freq)) |>
+    filter(is.finite(log2fc)) |>
+    select(class, kmer, first_nuc, log2fc) |>
+    pivot_wider(names_from = class, values_from = log2fc, names_prefix = "lfc_") |>
+    filter(!is.na(lfc_I), !is.na(lfc_II), !is.na(lfc_III), !is.na(lfc_IV))
+
+  all_lfc <- c(spl_wide$lfc_I, spl_wide$lfc_II,
+               spl_wide$lfc_III, spl_wide$lfc_IV)
+  lim <- ceiling(max(abs(all_lfc), na.rm = TRUE) * 1.08 * 10) / 10
+
+  ctrl_row      <- samples |> filter(sample_id == ctrl_id)
+  ctrl_lib_name <- stratum_label[stratum]
+  title_str <- sprintf("%s (%s)  %.0f×, TF≈%.0f%%  %s  vs  %s (%s)  %.0f×, TF≈%.0f%%  %s",
+                       s, dl, cv, tf * 100, lib_name,
+                       ctrl_id, ctrl_row$disease_label,
+                       ctrl_row$coverage, ctrl_row$tumor_fraction * 100,
+                       ctrl_lib_name)
+
+  make_cls_scatter <- function(xcol, ycol, xlab, ylab) {
+    d <- spl_wide |>
+      mutate(diag_sum = .data[[xcol]] + .data[[ycol]])
+
+    # Top 20 most up-shifted + top 20 most down-shifted along the diagonal
+    d_label <- bind_rows(
+      d |> slice_max(diag_sum, n = top_label_n_scatter, with_ties = FALSE),
+      d |> slice_min(diag_sum, n = top_label_n_scatter, with_ties = FALSE)
+    ) |> distinct(kmer, .keep_all = TRUE)
+
+    d_nolabel <- d |> anti_join(d_label, by = "kmer")
+
+    rho   <- cor(d[[xcol]], d[[ycol]], method = "spearman")
+    r_lbl <- sprintf("ρ = %.2f", rho)
+
+    ggplot(mapping = aes(x = .data[[xcol]], y = .data[[ycol]],
+                         color = first_nuc)) +
+      geom_hline(yintercept = 0, linewidth = 0.3, color = "grey50") +
+      geom_vline(xintercept = 0, linewidth = 0.3, color = "grey50") +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+                  linewidth = 0.3, color = "grey60") +
+      geom_point(data = d_nolabel, size = 0.8, alpha = 0.35) +
+      geom_point(data = d_label,   size = 2,   alpha = 0.9) +
+      geom_text_repel(
+        data               = d_label,
+        aes(label          = as.character(kmer)),
+        size               = 2.6, family = "mono",
+        min.segment.length = 0, segment.size = 0.2, segment.color = "grey60",
+        max.overlaps       = Inf, box.padding = 0.25
+      ) +
+      annotate("text", x = -lim, y = lim, label = r_lbl,
+               hjust = 0, vjust = 1, size = 3.5, color = "grey25") +
+      scale_color_manual(values = nuc_colors, name = "First nt") +
+      guides(color = guide_legend(override.aes = list(size = 4, alpha = 1))) +
+      scale_x_continuous(limits = c(-lim, lim)) +
+      scale_y_continuous(limits = c(-lim, lim)) +
+      labs(x = xlab, y = ylab) +
+      theme_bw(base_size = 11) +
+      theme(panel.grid.minor = element_blank())
+  }
+
+  p_A <- make_cls_scatter(
+    xcol = "lfc_IV", ycol = "lfc_III",
+    xlab = "log₂ FC — class IV (120–180 bp)",
+    ylab = "log₂ FC — class III (35–80 bp)"
+  )
+  p_B <- make_cls_scatter(
+    xcol = "lfc_II", ycol = "lfc_I",
+    xlab = "log₂ FC — class II (≥120 bp)",
+    ylab = "log₂ FC — class I (<120 bp)"
+  )
+
+  p_out <- (p_A | p_B) +
+    plot_layout(guides = "collect") +
+    plot_annotation(title = title_str) &
+    theme(plot.title    = element_text(size = 11, face = "plain"),
+          legend.position = "right")
+
+  outfile <- file.path("analysis/per_spl_lfc_scatters/IIIvsIV_IvsII",
+                       sprintf("lfc_scatter_%s_%s_%s.png", s, dl, lt))
+  ggsave(outfile, p_out, width = 13, height = 6, dpi = 300)
+  message("Wrote ", outfile)
+})
+
+# ---------------------------------------------------------------------------
+# Per-sample log2FC scatter: class I (x) vs class III (y) — single panel
+#   Same strata/control logic and visual style as IIIvsIV_IvsII section
+#   Output: analysis/per_spl_lfc_scatters/IvsIII/lfc_cls_scatter_<samplename>.png
+# ---------------------------------------------------------------------------
+message("\n--- Per-sample log2FC scatter: class I vs class III ---")
+
+dir.create("analysis/per_spl_lfc_scatters/IvsIII", showWarnings = FALSE, recursive = TRUE)
+
+walk(cancer_samples$sample_id, function(s) {
+  srow <- samples |> filter(sample_id == s)
+  lt   <- as.character(srow$library_type)
+  cv   <- srow$coverage
+  tf   <- srow$tumor_fraction
+  dl   <- srow$disease_label
+
+  stratum  <- if (lt == "DSP") "DSP" else if (cv >= 10) "SSP_ge10" else "SSP_lt10"
+  ctrl_id  <- stratum_ctrl[stratum]
+  lib_name <- stratum_label[stratum]
+
+  ctrl_f <- motifs |>
+    filter(sample_id == ctrl_id, as.character(class) %in% c("I", "III")) |>
+    select(class, kmer, ctrl_freq = freq)
+
+  spl_wide <- motifs |>
+    filter(sample_id == s, as.character(class) %in% c("I", "III")) |>
+    left_join(ctrl_f, by = c("class", "kmer")) |>
+    mutate(log2fc = log2(freq / ctrl_freq)) |>
+    filter(is.finite(log2fc)) |>
+    select(class, kmer, first_nuc, log2fc) |>
+    pivot_wider(names_from = class, values_from = log2fc, names_prefix = "lfc_") |>
+    filter(!is.na(lfc_I), !is.na(lfc_III))
+
+  lim <- ceiling(max(abs(c(spl_wide$lfc_I, spl_wide$lfc_III)), na.rm = TRUE) * 1.08 * 10) / 10
+
+  ctrl_row      <- samples |> filter(sample_id == ctrl_id)
+  title_str <- sprintf("%s (%s)  %.0f×, TF≈%.0f%%  %s  vs  %s (%s)  %.0f×, TF≈%.0f%%  %s",
+                       s, dl, cv, tf * 100, lib_name,
+                       ctrl_id, ctrl_row$disease_label,
+                       ctrl_row$coverage, ctrl_row$tumor_fraction * 100,
+                       lib_name)
+
+  d <- spl_wide |> mutate(diag_sum = lfc_I + lfc_III)
+  d_label <- bind_rows(
+    d |> slice_max(diag_sum, n = top_label_n_scatter, with_ties = FALSE),
+    d |> slice_min(diag_sum, n = top_label_n_scatter, with_ties = FALSE)
+  ) |> distinct(kmer, .keep_all = TRUE)
+  d_nolabel <- d |> anti_join(d_label, by = "kmer")
+
+  rho   <- cor(d$lfc_I, d$lfc_III, method = "spearman")
+  r_lbl <- sprintf("ρ = %.2f", rho)
+
+  p_out <- ggplot(mapping = aes(x = lfc_I, y = lfc_III, color = first_nuc)) +
+    geom_hline(yintercept = 0, linewidth = 0.3, color = "grey50") +
+    geom_vline(xintercept = 0, linewidth = 0.3, color = "grey50") +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+                linewidth = 0.3, color = "grey60") +
+    geom_point(data = d_nolabel, size = 0.8, alpha = 0.35) +
+    geom_point(data = d_label,   size = 2,   alpha = 0.9) +
+    geom_text_repel(
+      data               = d_label,
+      aes(label          = as.character(kmer)),
+      size               = 2.6, family = "mono",
+      min.segment.length = 0, segment.size = 0.2, segment.color = "grey60",
+      max.overlaps       = Inf, box.padding = 0.25
+    ) +
+    annotate("text", x = -lim, y = lim, label = r_lbl,
+             hjust = 0, vjust = 1, size = 3.5, color = "grey25") +
+    scale_color_manual(values = nuc_colors, name = "First nt") +
+    guides(color = guide_legend(override.aes = list(size = 4, alpha = 1))) +
+    scale_x_continuous(limits = c(-lim, lim)) +
+    scale_y_continuous(limits = c(-lim, lim)) +
+    labs(title = title_str,
+         x     = "log₂ FC — class I (<120 bp)",
+         y     = "log₂ FC — class III (35–80 bp)") +
+    theme_bw(base_size = 11) +
+    theme(panel.grid.minor  = element_blank(),
+          plot.title        = element_text(size = 11, face = "plain"),
+          legend.position   = "right")
+
+  outfile <- file.path("analysis/per_spl_lfc_scatters/IvsIII",
+                       sprintf("lfc_scatter_%s_%s_%s.png", s, dl, lt))
+  ggsave(outfile, p_out, width = 7, height = 6, dpi = 300)
+  message("Wrote ", outfile)
+})
