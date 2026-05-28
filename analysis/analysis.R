@@ -13,6 +13,14 @@ suppressPackageStartupMessages({
 
 config <- yaml::read_yaml("analysis/config.yaml")
 
+dir.create("analysis/all_spls",  showWarnings = FALSE, recursive = TRUE)
+dir.create("analysis/ssp_subset", showWarnings = FALSE, recursive = TRUE)
+
+log_con <- file("analysis/analysis.log", open = "wt")
+sink(log_con, type = "output")
+sink(log_con, type = "message")
+on.exit({ sink(type = "message"); sink(type = "output"); close(log_con) })
+
 # Shared palettes
 group_colors <- c(healthy = "#523FCC", cancer = "#FF004C")
 lib_colors   <- c(SSP = "#2166AC", DSP = "#B2182B")
@@ -53,9 +61,9 @@ p_cov_tf <- ggplot(samples, aes(tumor_fraction, coverage,
   theme_bw(base_size = 11) +
   theme(panel.grid.minor = element_blank())
 
-ggsave("analysis/coverage_vs_tf.png", p_cov_tf,
+ggsave("analysis/all_spls/coverage_vs_tf.png", p_cov_tf,
        width = 5, height = 4, dpi = 300)
-message("\nWrote analysis/coverage_vs_tf.png")
+message("\nWrote analysis/all_spls/coverage_vs_tf.png")
 
 # ---------------------------------------------------------------------------
 # Fragment length ridgeplot (35-500 bp)
@@ -132,9 +140,9 @@ p_frag <- (p_top / p_bot) +
   plot_layout(guides = "collect", heights = c(n_top, n_bot)) &
   theme(legend.position = "right")
 
-ggsave("analysis/frag_length_ridges.png", p_frag,
+ggsave("analysis/all_spls/frag_length_ridges.png", p_frag,
        width = 8, height = 0.35 * nrow(samples) + 2, dpi = 300)
-message("Wrote analysis/frag_length_ridges.png")
+message("Wrote analysis/all_spls/frag_length_ridges.png")
 
 # ---------------------------------------------------------------------------
 # Median 4-mer end-motif barplots (per class × library/group combo)
@@ -194,9 +202,9 @@ top_d <- motifs |>
 p_top_mot <- make_motif_bar(top_d, "lib_group") +
   ggtitle("Median 4-mer end-motif frequencies, coverage ≥ 10×")
 
-ggsave("analysis/motif_freq_ge10.png", p_top_mot,
+ggsave("analysis/all_spls/motif_freq_ge10.png", p_top_mot,
        width = 12, height = 7, dpi = 300)
-message("Wrote analysis/motif_freq_ge10.png")
+message("Wrote analysis/all_spls/motif_freq_ge10.png")
 
 # Bottom: <10x, faceted by group only (SSP only — no DSP samples below 10×)
 bot_d <- motifs |> filter(coverage < 10)
@@ -205,9 +213,9 @@ stopifnot(all(bot_d$library_type == "SSP"))
 p_bot_mot <- make_motif_bar(bot_d, "sample_group") +
   ggtitle("Median 4-mer end-motif frequencies, coverage < 10× (SSP only)")
 
-ggsave("analysis/motif_freq_lt10.png", p_bot_mot,
+ggsave("analysis/all_spls/motif_freq_lt10.png", p_bot_mot,
        width = 7, height = 7, dpi = 300)
-message("Wrote analysis/motif_freq_lt10.png")
+message("Wrote analysis/all_spls/motif_freq_lt10.png")
 
 # ---------------------------------------------------------------------------
 # MDS (normalized Shannon entropy) strip plot
@@ -265,15 +273,15 @@ p_mds <- ggplot(mds_class, aes(x_num, mds,
   theme(panel.grid.minor = element_blank(),
         strip.background = element_rect(fill = "grey92"))
 
-ggsave("analysis/mds_strip.png", p_mds,
+ggsave("analysis/all_spls/mds_strip.png", p_mds,
        width = 8, height = 4, dpi = 300)
-message("Wrote analysis/mds_strip.png")
+message("Wrote analysis/all_spls/mds_strip.png")
 
 # Per-sample plots
 if (isTRUE(config$skip_per_spl_4mer_freq)) {
   message("Skipping per-sample 4-mer plots (config$skip_per_spl_4mer_freq = TRUE)")
 } else {
-per_sample_dir <- "analysis/4mer_freqs"
+per_sample_dir <- "analysis/all_spls/4mer_freqs"
 dir.create(per_sample_dir, showWarnings = FALSE, recursive = TRUE)
 
 for (s in samples$sample_id) {
@@ -393,8 +401,8 @@ make_lfc_bar <- function(st) {
 out_files <- c(DSP = "lfc_dsp.png", SSP_ge10 = "lfc_ssp_ge10.png", SSP_lt10 = "lfc_ssp_lt10.png")
 for (st in strata_order) {
   p <- make_lfc_bar(st)
-  ggsave(file.path("analysis", out_files[st]), p, width = 8, height = 7, dpi = 300)
-  message("Wrote analysis/", out_files[st])
+  ggsave(file.path("analysis/all_spls", out_files[st]), p, width = 8, height = 7, dpi = 300)
+  message("Wrote analysis/all_spls/", out_files[st])
 }
 
 # ---------------------------------------------------------------------------
@@ -485,8 +493,8 @@ p_pca_all <- ggplot() +
   theme_bw(base_size = 11) +
   theme(panel.grid.minor = element_blank())
 
-ggsave("analysis/pca_all_samples.png", p_pca_all, width = 7, height = 6, dpi = 300)
-message("Wrote analysis/pca_all_samples.png")
+ggsave("analysis/all_spls/pca_all_samples.png", p_pca_all, width = 7, height = 6, dpi = 300)
+message("Wrote analysis/all_spls/pca_all_samples.png")
 
 # ---------------------------------------------------------------------------
 # PCA — per library type: SSP and DSP side by side (patchwork)
@@ -591,8 +599,8 @@ p_pca_libs <- (p_ssp | p_dsp) +
   ) &
   theme(legend.position = "right")
 
-ggsave("analysis/pca_by_library.png", p_pca_libs, width = 14, height = 6, dpi = 300)
-message("Wrote analysis/pca_by_library.png")
+ggsave("analysis/all_spls/pca_by_library.png", p_pca_libs, width = 14, height = 6, dpi = 300)
+message("Wrote analysis/all_spls/pca_by_library.png")
 
 # ---------------------------------------------------------------------------
 # SSP subset: IC17, IC37, IC20, IC35 vs IH02
@@ -673,9 +681,9 @@ p_ssp_median <- ggplot(median_lfc_sub, aes(kmer, log2fc, fill = first_nuc)) +
         axis.ticks.x     = element_blank(),
         strip.background = element_rect(fill = "grey92"))
 
-ggsave("analysis/lfc_ssp_subset_median.png", p_ssp_median,
+ggsave("analysis/ssp_subset/lfc_ssp_subset_median.png", p_ssp_median,
        width = 8, height = 10, dpi = 300)
-message("Wrote analysis/lfc_ssp_subset_median.png")
+message("Wrote analysis/ssp_subset/lfc_ssp_subset_median.png")
 
 # ---- B. Per-sample log2FC grid (4 samples × 5 classes) ----------------
 # Build informative row-strip labels
@@ -711,9 +719,9 @@ p_ssp_persample <- ggplot(persample_lfc_sub2,
         strip.background  = element_rect(fill = "grey92"),
         strip.text.y      = element_text(size = 7.5))
 
-ggsave("analysis/lfc_ssp_subset_per_sample.png", p_ssp_persample,
+ggsave("analysis/ssp_subset/lfc_ssp_subset_per_sample.png", p_ssp_persample,
        width = 12, height = 7, dpi = 300)
-message("Wrote analysis/lfc_ssp_subset_per_sample.png")
+message("Wrote analysis/ssp_subset/lfc_ssp_subset_per_sample.png")
 
 # ---- C. Concordance ----------------------------------------------------
 concordance_sub <- persample_lfc_sub |>
@@ -767,8 +775,8 @@ concord_csv <- concord_csv |>
   rename(motif = kmer) |>
   select(motif, all_of(concord_col_order))
 
-write_csv(concord_csv, "analysis/ssp_subset_concordant_motifs.csv", na = "")
-message(sprintf("Wrote analysis/ssp_subset_concordant_motifs.csv  (%d motifs)",
+write_csv(concord_csv, "analysis/ssp_subset/ssp_subset_concordant_motifs.csv", na = "")
+message(sprintf("Wrote analysis/ssp_subset/ssp_subset_concordant_motifs.csv  (%d motifs)",
                 nrow(concord_csv)))
 
 if (nrow(concord_csv) == 0) {
@@ -839,9 +847,9 @@ p_concord <- ggplot() +
         strip.background   = element_rect(fill = "grey92"),
         axis.text.y        = element_text(family = "mono", size = 8))
 
-ggsave("analysis/lfc_ssp_subset_concordant.png", p_concord,
+ggsave("analysis/ssp_subset/lfc_ssp_subset_concordant.png", p_concord,
        width = 14, height = 7, dpi = 300)
-message("Wrote analysis/lfc_ssp_subset_concordant.png")
+message("Wrote analysis/ssp_subset/lfc_ssp_subset_concordant.png")
 
 } # end if (nrow(concord_csv) > 0)
 
@@ -957,6 +965,325 @@ p_iii_iv <- ggplot(iii_iv, aes(median_lfc_III, median_lfc_IV, color = membership
   theme(panel.grid.minor = element_blank(),
         legend.position  = "right")
 
-ggsave("analysis/lfc_ssp_subset_III_vs_IV.png", p_iii_iv,
+ggsave("analysis/ssp_subset/lfc_ssp_subset_III_vs_IV.png", p_iii_iv,
        width = 8, height = 7, dpi = 300)
-message("\nWrote analysis/lfc_ssp_subset_III_vs_IV.png")
+message("\nWrote analysis/ssp_subset/lfc_ssp_subset_III_vs_IV.png")
+
+# ---- Grouped barplot: motifs discordant between class III and IV ----------
+# Filter to motifs concordant in exactly one of III/IV (or opposite direction)
+diff_motifs <- iii_iv |>
+  filter(membership %in% c("III only", "IV only", "opposite direction"))
+
+# Order within each membership by the primary class log2FC
+kmer_order_bar <- c(
+  diff_motifs |> filter(membership == "opposite direction") |>
+    arrange(median_lfc_III) |> pull(kmer) |> as.character(),
+  diff_motifs |> filter(membership == "III only") |>
+    arrange(median_lfc_III) |> pull(kmer) |> as.character(),
+  diff_motifs |> filter(membership == "IV only") |>
+    arrange(median_lfc_IV)  |> pull(kmer) |> as.character()
+)
+
+# Pull median + SD for III and IV from concordance_sub; join membership
+diff_bar <- concordance_sub |>
+  filter(as.character(class) %in% c("III", "IV"),
+         as.character(kmer)  %in% kmer_order_bar) |>
+  left_join(diff_motifs |> select(kmer, membership), by = "kmer") |>
+  mutate(
+    kmer  = factor(as.character(kmer),  levels = kmer_order_bar),
+    class = factor(as.character(class), levels = c("III", "IV"))
+  )
+
+class_colors_bar <- c(III = "#2166AC", IV = "#E08214")
+
+p_db <- ggplot(diff_bar, aes(x = kmer, y = median_lfc, fill = class)) +
+  geom_hline(yintercept = 0, linewidth = 0.35, color = "grey40") +
+  geom_col(position = position_dodge(width = 0.75), width = 0.7, linewidth = 0) +
+  geom_errorbar(
+    aes(ymin = median_lfc - sd_lfc, ymax = median_lfc + sd_lfc),
+    position  = position_dodge(width = 0.75),
+    width     = 0.35, linewidth = 0.4, color = "grey30"
+  ) +
+  scale_fill_manual(values = class_colors_bar, name = "Class") +
+  facet_grid(. ~ membership, scales = "free_x", space = "free_x") +
+  labs(
+    title   = "Class-discordant concordant shifts: III only vs IV only (SSP subset vs IH02)",
+    x       = NULL,
+    y       = "Median log₂ FC (vs IH02) ± SD",
+    caption = "Concordance defined as all 4 cancer samples (IC17/IC37/IC20/IC35) agreeing on direction vs IH02"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    axis.text.x      = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                    family = "mono", size = 7),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    strip.background   = element_rect(fill = "grey92"),
+    legend.position    = "right",
+    plot.caption       = element_text(size = 7.5, color = "grey45", hjust = 0,
+                                      margin = margin(t = 6))
+  )
+
+p_db_width <- nrow(diff_motifs) * 0.22 + 2.5
+
+ggsave("analysis/ssp_subset/lfc_ssp_subset_III_vs_IV_barplot.png", p_db,
+       width = 10, height = 5, dpi = 300)
+message("Wrote analysis/ssp_subset/lfc_ssp_subset_III_vs_IV_barplot.png")
+
+# ---- Paired III − IV difference per motif ---------------------------------
+# For each motif × cancer sample compute log2FC_III − log2FC_IV directly.
+# Avoids the binary concordance threshold; measures class-specificity as a
+# continuous paired quantity.
+
+top_n_diff <- 20L
+
+diff_paired <- persample_lfc_sub |>
+  filter(as.character(class) %in% c("III", "IV")) |>
+  select(sample_id, kmer, first_nuc, class, log2fc) |>
+  pivot_wider(names_from = class, values_from = log2fc, names_prefix = "lfc_") |>
+  mutate(diff_III_IV = lfc_III - lfc_IV)
+
+diff_summary <- diff_paired |>
+  group_by(kmer, first_nuc) |>
+  summarise(median_diff = median(diff_III_IV),
+            sd_diff     = sd(diff_III_IV),
+            .groups = "drop")
+
+top_diff <- bind_rows(
+  diff_summary |> slice_max(median_diff, n = top_n_diff, with_ties = FALSE),
+  diff_summary |> slice_min(median_diff, n = top_n_diff, with_ties = FALSE)
+) |>
+  distinct() |>
+  arrange(median_diff) |>
+  mutate(kmer = factor(as.character(kmer), levels = as.character(kmer)))
+
+diff_pts <- diff_paired |>
+  filter(as.character(kmer) %in% levels(top_diff$kmer)) |>
+  mutate(kmer = factor(as.character(kmer), levels = levels(top_diff$kmer)))
+
+p_diff_paired <- ggplot() +
+  geom_vline(xintercept = 0, linewidth = 0.3, color = "grey50") +
+  geom_segment(data = top_diff,
+               aes(x = 0, xend = median_diff, y = kmer, yend = kmer),
+               linewidth = 0.5, color = "grey65") +
+  geom_point(data  = diff_pts,
+             aes(x = diff_III_IV, y = kmer, color = sample_id),
+             size = 2.2, alpha = 0.85) +
+  geom_point(data  = top_diff,
+             aes(x = median_diff, y = kmer, color = "Median"),
+             shape = 19, size = 3.2) +
+  scale_color_manual(values = c(sample_colors_sub, Median = "grey20"),
+                     labels = c(sample_labels_sub, Median = "Median"),
+                     name = "Sample") +
+  labs(
+    title = sprintf("Top %d motifs by class III − IV log₂FC (SSP subset vs IH02)", top_n_diff),
+    x     = "log₂FC(III) − log₂FC(IV)  [per sample]",
+    y     = NULL
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid.major.x = element_line(linewidth = 0.2, color = "grey88"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    axis.text.y        = element_text(family = "mono", size = 9),
+    legend.position    = "right"
+  )
+
+ggsave("analysis/ssp_subset/lfc_ssp_subset_III_vs_IV_diff.png", p_diff_paired,
+       width = 7, height = top_n_diff * 0.28 + 2, dpi = 300)
+message("Wrote analysis/ssp_subset/lfc_ssp_subset_III_vs_IV_diff.png")
+
+# ---------------------------------------------------------------------------
+# Focal motif log2FC: 6 motifs of interest across length classes I–IV
+#   CCCA, CCAG, CCTG, TAAA, AAAA, TTTT
+#   SSP subset cancer samples (IC17/IC37/IC20/IC35) vs IH02
+# ---------------------------------------------------------------------------
+message("\n--- Focal motif log2FC: selected motifs across classes I–IV ---")
+
+focal_motifs   <- c("CCCA", "CCAG", "CCTG", "TAAA", "AAAA", "TTTT")
+focal_classes  <- c("I", "II", "III", "IV")
+
+focal_pts <- persample_lfc_sub |>
+  filter(as.character(kmer) %in% focal_motifs,
+         as.character(class) %in% focal_classes) |>
+  mutate(
+    kmer  = factor(as.character(kmer),  levels = focal_motifs),
+    class = factor(as.character(class), levels = focal_classes)
+  )
+
+focal_med <- focal_pts |>
+  group_by(kmer, class) |>
+  summarise(median_lfc = median(log2fc), .groups = "drop")
+
+# Colour each cancer sample distinctly (reuse palette from concordance section)
+focal_sample_colors <- sample_colors_sub   # already defined above
+
+p_focal <- ggplot() +
+  geom_hline(yintercept = 0, linewidth = 0.35, color = "grey50") +
+  # per-sample points + connecting lines across classes
+  geom_line(data  = focal_pts,
+            aes(x = class, y = log2fc, group = sample_id, color = sample_id),
+            linewidth = 0.55, alpha = 0.6) +
+  geom_point(data = focal_pts,
+             aes(x = class, y = log2fc, color = sample_id),
+             size = 2.2, alpha = 0.85) +
+  # median line + marker
+  geom_line(data  = focal_med,
+            aes(x = class, y = median_lfc, group = kmer),
+            linewidth = 0.9, color = "grey20", alpha = 0.9) +
+  geom_point(data  = focal_med,
+             aes(x = class, y = median_lfc),
+             shape = 21, size = 3.5, fill = "grey20",
+             color = "white", stroke = 0.6) +
+  scale_color_manual(values = focal_sample_colors,
+                     labels = sample_labels_sub,
+                     name   = "Sample") +
+  scale_x_discrete(expand = expansion(add = 0.4)) +
+  facet_wrap(~ kmer, nrow = 2, scales = "free_y") +
+  labs(
+    x = "Fragment length class",
+    y = "log₂ FC (vs IH02)"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    strip.background   = element_rect(fill = "grey92"),
+    strip.text         = element_text(family = "mono", face = "bold", size = 10),
+    legend.position    = "right"
+  )
+
+ggsave("analysis/ssp_subset/lfc_ssp_subset_focal_motifs.png", p_focal,
+       width = 9, height = 5.5, dpi = 300)
+message("Wrote analysis/ssp_subset/lfc_ssp_subset_focal_motifs.png")
+
+# ---------------------------------------------------------------------------
+# SSP subset MDS across all 5 fragment-length classes
+#   IH02 (healthy, n=1) vs IC17/IC37/IC20/IC35 (cancer, n=4)
+#
+# Wilcoxon rank-sum appropriateness note:
+#   With n_healthy = 1, there are exactly 5 possible rank orderings of the
+#   5 observations (ranks 1–5 for the single healthy observation).  Under H₀
+#   each is equally probable (p = 1/5), so the minimum achievable TWO-SIDED
+#   exact p-value is 2 × (1/5) = 0.40.  The test CANNOT reach p < 0.05
+#   regardless of how extreme the data are.  We run it with exact = FALSE
+#   (normal approximation) for completeness — the resulting p-values are
+#   displayed but are labelled as underpowered.  A valid formal test would
+#   require at least n ≥ 3 in the smaller group.
+# ---------------------------------------------------------------------------
+message("\n--- SSP subset MDS across fragment classes ---")
+message("  NOTE: Wilcoxon with n_healthy=1 — min achievable p(two-sided) = 0.40")
+
+ssp_mds_sub <- mds_tbl |>
+  filter(sample_id %in% ssp_sub_ids,
+         class     %in% ssp_all_classes) |>
+  mutate(
+    class = factor(class, levels = ssp_all_classes),
+    group = factor(if_else(sample_id == ssp_sub_ctrl, "healthy", "cancer"),
+                   levels = c("healthy", "cancer"))
+  )
+
+ssp_mds_cancer  <- ssp_mds_sub |> filter(group == "cancer")
+ssp_mds_healthy <- ssp_mds_sub |> filter(group == "healthy")
+
+# Wilcoxon per class — suppress the "cannot compute exact p-value" warning
+# (expected with n=1 in one group)
+wilcox_ssp <- ssp_mds_sub |>
+  group_by(class) |>
+  summarise(
+    n_cancer  = sum(group == "cancer"),
+    n_healthy = sum(group == "healthy"),
+    p_value   = tryCatch(
+      suppressWarnings(
+        wilcox.test(mds[group == "cancer"],
+                    mds[group == "healthy"],
+                    exact = FALSE)$p.value
+      ),
+      error = function(e) NA_real_
+    ),
+    y_top = max(mds, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    # mark everything NS explicitly — at n_healthy=1 nothing can be significant
+    sig_label = if_else(
+      is.na(p_value),
+      "n/a",
+      sprintf("p=%.2f\n(ns†)", p_value)
+    )
+  )
+
+message("  Wilcoxon rank-sum (exact=FALSE, normal approx), n_cancer=4, n_healthy=1:")
+for (i in seq_len(nrow(wilcox_ssp))) {
+  message(sprintf("  class %-5s  p = %.4f",
+                  as.character(wilcox_ssp$class[i]),
+                  wilcox_ssp$p_value[i]))
+}
+
+class_xlabs <- c(
+  all = "all\n(unfiltered)",
+  I   = "I\n(<120 bp)",
+  II  = "II\n(≥120 bp)",
+  III = "III\n(35–80 bp)",
+  IV  = "IV\n(120–180 bp)"
+)
+
+# y-axis: pad top to accommodate p-value text
+y_range   <- range(ssp_mds_sub$mds, na.rm = TRUE)
+y_pad_top <- diff(y_range) * 0.28    # ~28 % of range above highest point
+
+p_ssp_mds <- ggplot() +
+  # ---- connecting lines ----
+  geom_line(data      = ssp_mds_cancer,
+            aes(x     = class, y = mds,
+                color = sample_id, group = sample_id),
+            linewidth = 0.55, alpha = 0.65) +
+  geom_line(data      = ssp_mds_healthy,
+            aes(x     = class, y = mds, group = sample_id),
+            linewidth = 0.8, color = group_colors["healthy"],
+            alpha     = 0.8, linetype = "dashed") +
+  # ---- points ----
+  geom_point(data     = ssp_mds_cancer,
+             aes(x    = class, y = mds, color = sample_id),
+             shape    = 16, size = 3.2, alpha = 0.9) +
+  geom_point(data     = ssp_mds_healthy,
+             aes(x    = class, y = mds),
+             shape    = 23, size = 5,
+             fill     = group_colors["healthy"],
+             color    = "white", stroke = 0.8) +
+  # ---- Wilcoxon p-value annotation ----
+  geom_text(data        = wilcox_ssp,
+            aes(x       = class,
+                y       = y_top + diff(y_range) * 0.04,
+                label   = sig_label),
+            size        = 2.6, hjust = 0.5, vjust = 0,
+            color       = "grey40", lineheight = 0.9) +
+  # ---- scales / labels ----
+  scale_x_discrete(labels = class_xlabs) +
+  scale_color_manual(values = sample_colors_sub,
+                     labels = sample_labels_sub,
+                     name   = "Cancer sample") +
+  scale_y_continuous(
+    expand = expansion(add = c(diff(y_range) * 0.04, y_pad_top))
+  ) +
+  labs(
+    x       = "Fragment length class",
+    y       = "Motif Diversity Score (MDS)",
+    caption = paste0(
+      "◆ ", ssp_sub_ctrl, " (healthy reference, dashed line)  |  ",
+      "† Wilcoxon rank-sum (exact=FALSE); n_healthy = 1 ⇒ ",
+      "min achievable p₂₋ₜₑₜ = 0.40 (underpowered)"
+    )
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    legend.position    = "right",
+    plot.caption       = element_text(size = 7.5, color = "grey45", hjust = 0,
+                                      margin = margin(t = 6))
+  )
+
+ggsave("analysis/ssp_subset/mds_ssp_subset.png", p_ssp_mds,
+       width = 8, height = 5, dpi = 300)
+message("Wrote analysis/ssp_subset/mds_ssp_subset.png")
