@@ -1,0 +1,3 @@
+sample_id,sample_group,library_type,coverage,tissues
+IH01,healthy,DSP,104.9,all
+IC49,cancer,DSP,11.2,all

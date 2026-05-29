@@ -14,10 +14,10 @@
 set -euo pipefail
 
 ROOT="${ROOT:-/mnt/scratch/DM/cfdna}"
-REF_DIR="$ROOT/refs/coo"
+REF_DIR="$ROOT/cell-of-origin/refs"
 SEDB_BASE="${SEDB_BASE:-http://www.licpathway.net/sedb/download_v3}"
 SEINFO="$REF_DIR/sedb3_human_sample_information.txt"
-SHEET="$ROOT/analysis/cell_of_origin/coverage_samplesheet.csv"
+SHEET="$ROOT/cell-of-origin/coverage_samplesheet.csv"
 META="$ROOT/snyder2016_metadata_GSE.csv"
 TUMOR="$ROOT/analysis/tumor_types.csv"
 SAMPLES="$REF_DIR/se_samples.tsv"
