@@ -1,0 +1,21 @@
+# Reusable command-line genomics toolkit (BAM / interval / coverage work).
+# Used by this project's host-side scripts — 00_build_sites.sh (bedtools, liftOver) and
+# 01_coverage.sh (sambamba, python) — but intentionally general so it can be reused across
+# analyses rather than being tied to the cell-of-origin work.
+#
+#   micromamba create -f environment.yml
+#   micromamba activate genomics-tools
+#
+# (R / tidyverse for 02_plot_coverage.R is handled by the existing R library, not here.)
+name: genomics-tools
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python >=3.10
+  - samtools
+  - bedtools
+  - sambamba
+  - bcftools
+  - htslib        # bgzip, tabix
+  - ucsc-liftover # liftOver (fallback for the standalone binary in refs/coo/)

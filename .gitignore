@@ -8,7 +8,16 @@ analysis/**/*.csv
 *.pid
 
 refs/*
+# keep the reference download scripts (the downloaded data itself stays ignored)
+!refs/*.sh
 
 mmc2.xlsx
 
 .claude/
+
+# cell-of-origin generated outputs (regenerable from 00/01 scripts)
+analysis/cell_of_origin/coverage/
+analysis/cell_of_origin/se_tmp/
+analysis/cell_of_origin/sites/
+# but keep the hand-curated tissue map (otherwise caught by *.tsv above)
+!analysis/cell_of_origin/tissue_map.tsv
