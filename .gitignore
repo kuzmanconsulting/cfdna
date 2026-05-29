@@ -19,5 +19,6 @@ mmc2.xlsx
 analysis/cell_of_origin/coverage/
 analysis/cell_of_origin/se_tmp/
 analysis/cell_of_origin/sites/
-# but keep the hand-curated tissue map (otherwise caught by *.tsv above)
+# but keep the hand-curated control files (otherwise caught by *.tsv / *.csv above)
 !analysis/cell_of_origin/tissue_map.tsv
+!analysis/cell_of_origin/coverage_samplesheet.csv

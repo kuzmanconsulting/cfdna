@@ -1,7 +1,0 @@
-tissue	sedb_tissue_regex	note
-colon	colon	Colon — CRC samples IC37 (deep), IC33 (shallow)
-lung	lung	Lung — SCLC IC15/IC32, squamous IC20/IC28, adeno IC10
-liver	liver	Liver — HCC samples IC17 (deep), IC23 (shallow)
-breast	breast|mammary	Breast — DCIS samples IC35 (mid), IC46 (shallow)
-pancreas	pancreas	Pancreas — ductal samples IC49/IC50/IC51/IC52 (DSP)
-blood	blood|bone marrow|haematopoietic|lymph node	Hematopoietic background — expected to dip in healthy plasma

@@ -1,100 +1,187 @@
 # Cell-of-origin cfDNA coverage analysis
 
+Infers tissue-of-origin from the Snyder 2016 cfDNA by measuring read coverage at
+**tissue-specific super-enhancers**. Active super-enhancers are nucleosome-depleted open
+chromatin; when a tissue sheds cfDNA, fragments spanning its active regulatory regions are
+preferentially cut, so coverage there drops. A **low cancer / matched-normal coverage ratio at
+a tissue's super-enhancers therefore flags that tissue as a likely cell-of-origin.**
+
+Super-enhancer coordinates come from **SEdb 3.0** (hg19), which matches the GRCh37/hg19 BAMs —
+no liftOver. Coverage is profiled in a single **±1 kb window around each super-enhancer center**,
+reduced to one scalar per sample × tissue, scaled by library size, and compared cancer-vs-normal.
+
+## Route
+
+| Step | Script | Runs on | Needs |
+|---|---|---|---|
+| Refs | `refs/download_refs_coo.sh` | host (network) | curl, awk |
+| 0 | `00_build_sites.sh` | host | awk |
+| 1 | `01_coverage.sh` | host | sambamba, samtools |
+| 2 | `02_plot_coverage.R` | host | R + tidyverse |
+
+`ROOT` defaults to `/mnt/scratch/DM/cfdna` (the host mount) in every script; override with
+`ROOT=… bash …` if needed.
+
 ## Conda environment
 
+`sambamba`/`samtools` for step 1 (the analysis container has neither):
+
 ```bash
-micromamba create -f analysis/cell_of_origin/environment.yml
+micromamba create -f analysis/cell_of_origin/environment.yml   # genomics-tools
 ```
 
-## 0. Build sites
+R / tidyverse for step 2 is handled by the existing R library, not this env.
 
-A per-tissue loop that turns two hg38 databases into hg19 coverage-profiling windows matching your BAMs.
+## Config files
+
+| File | Role |
+|---|---|
+| `coverage_samplesheet.csv` | the samples to profile: `sample_id, sample_group, library_type, coverage, tissues`. `tissues=all` measures the sample against every site set; a `;`-separated list restricts it. |
+| `analysis/tumor_types.csv` | `disease, label, tissue` — the **single source of truth** mapping each Snyder diagnosis to its SEdb tissue (`Colorectal→colon`, `Lung→lung`, `Healthy→blood`, …). Drives both which reference tissues to download and each sample's own tissue. |
+
+---
+
+## Refs — `refs/download_refs_coo.sh`
+
+Fetches the SEdb reference and the super-enhancer BEDs for exactly the tissues this panel needs.
+
+### Process
+
+1. **SEdb sample table** — downloads `Human_sample_information_sedb3.txt` (cols `Sample ID,
+   Species, Data source, Biosample type, Tissue type, Biosample name`) to
+   `refs/coo/sedb3_human_sample_information.txt` if absent.
+2. **Panel tissues** — joins `coverage_samplesheet.csv` → `snyder2016_metadata_GSE.csv` (disease)
+   → `tumor_types.csv` (tissue), giving the unique tissue set (here: blood, breast, colon, liver,
+   lung, pancreas).
+3. **Normal-lineage reference samples** — for each tissue, selects SEdb samples whose `Tissue
+   type` matches the tissue **and** `Biosample type` ∈ {`Tissue`, `Primary cell`} — i.e. normal
+   lineage, **cancer cell lines excluded**. The tissue→SEdb-vocabulary regex defaults to the
+   tissue name as a substring; only `breast` (`breast|mammary`) and `liver` (`liver|hepat`) widen
+   it. Result → `refs/coo/se_samples.tsv` (`sample_id, tissue`).
+4. **Super-enhancer BEDs** — fetches each selected sample's whole-super-enhancer BED
+   (`SE_hg19_bed/{id}_SE_hg19.bed`; cols `se_chr, se_start, se_end, se_id, …`) into
+   `refs/coo/se_hg19/`. Cached — re-runs skip existing files; a non-`se_chr` header marks a bad
+   download and is removed. We fetch SE, **not** `SE_ele`: coverage is profiled at the
+   super-enhancer center, so only the SE coordinates are needed.
+
+### Outputs
+
+- `refs/coo/sedb3_human_sample_information.txt` — the SEdb sample table.
+- `refs/coo/se_samples.tsv` — `sample_id, tissue` for the selected normal-lineage references.
+- `refs/coo/se_hg19/{id}_SE_hg19.bed` — per-sample super-enhancer BEDs (cached).
+
+### Run
+
+```bash
+bash refs/download_refs_coo.sh
+```
+
+---
+
+## 0. Build sites — `00_build_sites.sh`
+
+Turns each tissue's pooled super-enhancers into non-overlapping ±1 kb coverage windows that match
+the BAMs. hg19-native, awk only — no liftOver, no bedtools.
 
 ### Inputs
 
 | Input | What it is |
 |---|---|
-| `refs/coo/gtrd_hg38_tf_centers.bed.gz` | ~51 M GTRD TF-binding-site centers (hg38): `chrom, pos, pos+1, TF` |
-| `refs/coo/sedb3_human_sample_information.txt` | SEdb sample table: `Sample ID, …, Biosample type, Tissue type, …` |
-| SEdb per-sample SE BEDs | downloaded on demand from `…/SE_hg38_bed/{id}_SE_hg38.bed` (hg38 super-enhancer regions) |
-| `refs/coo/liftOver` + `hg38ToHg19.over.chain.gz` | UCSC liftOver to convert hg38→hg19 |
-| `refs/hg19.chrom.sizes` | for bounds-checking windows against contig ends |
-| `tissue_map.tsv` | `tissue → SEdb Tissue-type regex` (colon, lung, liver, breast, pancreas, blood) |
-| params | `WINDOW=1000`, `MINGAP=2000`, `MAXSAMPLES=60`, `MAXSITES=20000` |
+| `refs/coo/se_samples.tsv` | tissue → reference sample list (from refs step) |
+| `refs/coo/se_hg19/*.bed` | per-sample super-enhancer BEDs (from refs step) |
+| `refs/hg19.chrom.sizes` | bounds-checking windows against contig ends |
+| params | `WINDOW=1000`, `MINGAP=2000` |
 
-### Process — for each tissue (lines 38–96)
+### Process — per tissue
 
-1. **Select samples** (43–45): from the SEdb table, take Sample IDs whose `Tissue type` matches the tissue regex **and** `Biosample type` is `Tissue`/`Primary cell` — i.e. normal-lineage SEs, *not* cancer cell lines. Cap at `MAXSAMPLES`.
-
-2. **Download + pool SEs** (49–58): fetch each sample's SE BED (cached in `se_dl/`), verify the `se_chr` header, drop it, keep cols 1–3 (`chrom/start/end`), append to a raw pool.
-
-3. **SE union** (61–63): filter to standard chroms (`chr1–22/X/Y`), `sort`, `bedtools merge` → the tissue's non-overlapping super-enhancer regions (hg38). *This is the cell-type filter.*
-
-4. **Intersect GTRD ∩ SE union** (66–69): `bedtools intersect -u` keeps every GTRD center landing inside any tissue SE → the TF binding sites active in that tissue's regulome (hg38). *GTRD supplies precise point anchors; SE membership makes them tissue-specific.*
-
-5. **liftOver hg38→hg19** (72–73): lift centers to hg19 so they match the BAMs; unmapped centers are dropped.
-
-6. **Finalize in hg19** (77–91):
-   - **strip `chr`** + keep `1–22/X/Y` → bare contigs matching the BAM `@SQ` names;
-   - **sort** by position;
-   - **isolate** (greedy, line 79): keep a center only if it's ≥ `MINGAP` (2 kb) from the last kept one — so the ±1 kb windows never overlap. This is what lets `aggregate_offsets.py` map each base to exactly one center;
-   - **cap** (83–84, 88): if > `MAXSITES` remain, take every *step*-th to bound coverage runtime;
-   - **expand + bound-check** (89–90): window = `[center−1000, center+1001)`, kept only if `start≥0` and `end ≤ chrom size`.
+1. **Pool centers** — for each reference sample of the tissue, emit one point per super-enhancer =
+   its **midpoint** `int((se_start+se_end)/2)`.
+2. **Standardize** — keep `chr1–22/X/Y`, **strip `chr`** → bare contigs matching the BAM `@SQ`
+   names (b37), `sort -u`.
+3. **Isolate** — greedily keep a center only if it's ≥ `MINGAP` (2 kb) from the last kept one on
+   that chrom, so the ±1 kb windows never overlap. This also collapses near-duplicate
+   super-enhancers pooled across samples.
+4. **Expand + bound-check** — window = `[center−1000, center+1001)`, kept only if `start ≥ 0` and
+   `end ≤ chrom size`.
 
 ### Outputs
 
-- **`sites/{tissue}.bed`** — `chrom, start, end, center` (bare hg19 contigs, isolated ±1 kb windows). Consumed by `01_coverage.sh`; the `center` column drives the aggregator's offset math.
-- **`sites/manifest.tsv`** — per-tissue counts: `n_samples, n_se_union, n_centers_hg38, n_sites_final` (your sanity check).
-- **`se_tmp/`** — intermediates (raw pools, SE unions, hg38/hg19 centers, isolated lists) + cached SE downloads in `se_tmp/se_dl/` (so re-runs skip re-downloading).
-
-**Net transformation:** *"all TF binding sites genome-wide" (hg38) → "tissue-active TF binding sites, spaced ≥2 kb apart, as hg19 ±1 kb windows."* The spacing and hg19/bare-contig conversion exist to make the downstream coverage aggregation correct against the BAMs.
+- `sites/{tissue}.bed` — `chrom, start, end, center` (bare hg19 contigs, isolated 2001-bp windows).
+- `sites/manifest.tsv` — `tissue, n_samples, n_superenhancers, n_sites` (sanity check).
 
 ### Run
 
 ```bash
-nohup micromamba run -n genomics-tools \
-    bash analysis/cell_of_origin/00_build_sites.sh \
+micromamba run -n genomics-tools bash analysis/cell_of_origin/00_build_sites.sh \
     > analysis/cell_of_origin/build_sites.log 2>&1
 ```
 
-## 1. Coverage
+---
 
-For each sample × tissue, computes per-base cfDNA coverage in the tissue's ±1 kb windows and collapses it to one −1000…+1000 mean-coverage profile.
+## 1. Coverage — `01_coverage.sh`
+
+For each sample × tissue, the mean cfDNA coverage in that tissue's ±1 kb windows, scaled by
+library size. One scalar per pair. **Runs on host** — sambamba is not in the analysis container.
 
 ### Inputs
 
 | Input | What it is |
 |---|---|
-| `sites/{tissue}.bed` | per-tissue isolated ±1 kb windows from step 0 (`chrom, start, end, center`) |
+| `sites/{tissue}.bed` | per-tissue ±1 kb windows from step 0 |
+| `coverage_samplesheet.csv` | which samples to run, and which tissues per sample |
 | `cfdna-finale-snakemake/work/{sample}/{sample}.md.bam` (+ `.bai`) | preprocessed BAMs: coordinate-sorted, MarkDuplicates-flagged, indexed |
-| `cfdna-finale-snakemake/samplesheet.csv` | the 18-sample list (`sample_id, srr, …`) |
-| `aggregate_offsets.py` | companion script that collapses per-base depth to an offset profile |
-| env / params | `SAMBAMBA` (default `sambamba`), `THREADS` (default 8); filter = `MAPQ≥30, not duplicate/secondary/qcfail/unmapped`, all fragment sizes |
+| env / params | `SAMBAMBA`/`SAMTOOLS` (default on `PATH`), `THREADS` (default 8); filter = `MAPQ≥30, not duplicate/secondary/qcfail/unmapped` |
 
-### Process — for each sample × tissue (`01_coverage.sh` 33–45, `aggregate_offsets.py`)
+### Process — per sample × tissue
 
-1. **Discover tissues** (29–31): list `sites/*.bed` → tissue names.
+1. **Resolve BAM** — `…/work/{sample}/{sample}.md.bam`; skip the sample if missing. Dedup flags
+   and the index must already exist (that's why this uses the pipeline's `work/` BAMs).
+2. **Library size** — `samtools idxstats` → sum of mapped reads = `total_reads`.
+3. **Mean coverage** — `sambamba depth region` over the tissue's windows with the MAPQ/dedup
+   filter; mean of the `meanCoverage` column across windows = `mean_cov`.
+4. **Scale** — `scaled_cov = mean_cov / total_reads × 1e6`. The constant is cosmetic — it cancels
+   in the cancer/normal ratio, which is what corrects for differing library depths.
+5. **Atomic, idempotent write** — `> .tmp` then `mv`; existing outputs are skipped.
 
-2. **Resolve BAM** (33–36): the preprocessed `…/work/{sample}/{sample}.md.bam`; skip the sample if it's missing. Dedup flags and the index must already exist — that's why this uses the pipeline's `work/` BAMs, not raw `data/bam/`.
-
-3. **Skip-if-done** (37–40): `coverage/{sample}.{tissue}.offset_cov.tsv` is skipped if present, so the step is idempotent and resumable.
-
-4. **`sambamba depth base`** (41): per-base depth over that tissue's windows (`-L`), applying the MAPQ/dedup `-F` filter; emits `chrom pos cov …` for each covered base.
-
-5. **Collapse to offsets** (`aggregate_offsets.py`): load the sites BED → per-chrom sorted center list + total `n_sites` (py 23–32); stream each `(chrom, pos, cov)`, binary-search the single window containing `pos` (isolated ⇒ ≤1 match), compute `offset = pos − center`, and accumulate `sum_cov[offset]` + `n_covered[offset]` (py 39–68); write the profile (py 70–74).
-
-6. **Atomic write** (42–43): `> .tmp` then `mv`, so a killed run never leaves a partial profile.
+The `tissues` column gates which site sets a sample is measured against (`all` = every tissue).
 
 ### Outputs
 
-- **`coverage/{sample}.{tissue}.offset_cov.tsv`** — a `# n_sites=… sample=… tissue=…` comment line, then `offset, sum_cov, n_covered` for offsets −1000…+1000. **Mean coverage at an offset = `sum_cov / n_sites`** — the denominator is the window count, *not* `n_covered`, because zero-coverage bases are simply absent from sambamba's stream. Consumed by `02_plot_coverage.R`.
-
-The large depth spread across samples (~2×–148×) is **not** corrected here — that's handled by flank-normalization in step 2; this step stores raw summed coverage.
+- `coverage/{sample}.{tissue}.cov.tsv` — one row: `sample, tissue, n_windows, mean_cov,
+  total_reads, scaled_cov`. Consumed by `02_plot_coverage.R`.
 
 ### Run
 
 ```bash
-micromamba run -n genomics-tools \
-    bash analysis/cell_of_origin/01_coverage.sh \
+micromamba run -n genomics-tools bash analysis/cell_of_origin/01_coverage.sh \
     > analysis/cell_of_origin/coverage.log 2>&1
+```
+
+---
+
+## 2. Plot — `02_plot_coverage.R`
+
+Computes the cancer / matched-normal super-enhancer coverage ratio and plots it. Run from repo
+root (relative paths).
+
+### Process
+
+1. **Load** all `coverage/*.cov.tsv` (one row per sample × tissue).
+2. **Annotate** from `snyder2016_metadata_GSE.csv` + `tumor_types.csv`: `sample_group`, the
+   sample's `own_tissue`, and its matched-control **stratum**:
+   - `DSP → IH01`, `SSP & coverage ≥ 10 → IH02`, `SSP & coverage < 10 → IH03`.
+3. **Ratio** — for each cancer sample × tissue, `ratio = scaled_cov / scaled_cov[matched normal,
+   same tissue]`; `log2ratio`; flag `is_own` where `tissue == own_tissue`.
+
+### Outputs
+
+- `coo_coverage_ratio.tsv` — the full per-(cancer sample, tissue) ratio table.
+- `coo_coverage_heatmap.png` — log2(cancer/normal) heatmap, sample × tissue, own-tissue cells
+  outlined in black. Negative (blue) at a sample's own tissue = cell-of-origin signal.
+- `coo_own_tissue.png` — barplot of the log2 ratio at each cancer sample's own tissue.
+
+### Run
+
+```bash
+Rscript analysis/cell_of_origin/02_plot_coverage.R
 ```

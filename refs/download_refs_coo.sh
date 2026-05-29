@@ -1,44 +1,66 @@
 #!/bin/bash
-# Reference data for the cell-of-origin cfDNA coverage analysis.
-# Run on host (good bandwidth); writes to the shared refs/coo mount.
+# Reference data for the cell-of-origin cfDNA coverage analysis. RUN ON HOST (good bandwidth).
 #
-#   GTRD 19.10 human TF meta-clusters (hg38) -> slimmed to TF-binding-site centers
-#   SEdb 3.0 human sample-information table (sample -> tissue map)
-#   UCSC liftOver binary + hg38->hg19 chain (final sites are lifted to hg19 to match BAMs)
+#   1. SEdb 3.0 human sample-information table (sample -> tissue / biosample type).
+#   2. The tissues our cfDNA panel needs, derived by joining:
+#        coverage_samplesheet.csv  ->  snyder2016 disease  ->  tumor_types.csv tissue
+#   3. Per tissue, the NORMAL-lineage SEdb samples (Biosample type = Tissue or Primary cell;
+#      cancer cell lines excluded) -> se_samples.tsv  (sample_id, tissue).
+#   4. Each selected sample's whole super-enhancer BED (hg19), cached in se_hg19/.
 #
-# BAMs are GRCh37/hg19; GTRD is hg38, so intersection happens in hg38 and the final
-# per-tissue site sets are lifted to hg19 by 00_build_sites.sh.
+# We fetch SE (super-enhancer) BEDs, not SE_ele: coverage is profiled at the super-enhancer
+# center +-1 kb, so only the SE coordinates are needed. BAMs are GRCh37/hg19 and SEdb serves
+# hg19, so there is no liftOver step. 00_build_sites.sh consumes se_samples.tsv + se_hg19/.
 set -euo pipefail
 
-REF_DIR="/mnt/scratch/DM/cfdna/refs/coo"
-mkdir -p "$REF_DIR"
-cd "$REF_DIR"
+ROOT="${ROOT:-/mnt/scratch/DM/cfdna}"
+REF_DIR="$ROOT/refs/coo"
+SEDB_BASE="${SEDB_BASE:-http://www.licpathway.net/sedb/download_v3}"
+SEINFO="$REF_DIR/sedb3_human_sample_information.txt"
+SHEET="$ROOT/analysis/cell_of_origin/coverage_samplesheet.csv"
+META="$ROOT/snyder2016_metadata_GSE.csv"
+TUMOR="$ROOT/analysis/tumor_types.csv"
+SAMPLES="$REF_DIR/se_samples.tsv"
+SEDIR="$REF_DIR/se_hg19"
+mkdir -p "$SEDIR"
 
-GTRD_URL="https://gtrd.biouml.org/downloads/19.10/chip-seq/Homo%20sapiens_meta_clusters.interval.gz"
-SEDB_INFO_URL="http://www.licpathway.net/sedb/download_v3/Human_sample_information_sedb3.txt"
-LIFTOVER_URL="https://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64/liftOver"
-CHAIN_URL="https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/hg38ToHg19.over.chain.gz"
+# tumor_types tissue -> SEdb 'Tissue type' regex. Default is the tissue name as a substring;
+# only breast/liver need a wider pattern to catch SEdb's vocabulary (mammary, hepatocyte).
+declare -A TIS_RE=( [breast]='breast|mammary' [liver]='liver|hepat' )
 
-# meta_clusters columns: CHROM START END summit uniprotId tfTitle cell.set treatment.set
-#                        exp.set peak-caller.set peak-caller.count exp.count peak.count
-# Keep meta-clusters supported by >=2 experiments; emit 1 bp summit center (START+summit)
-# with the TF title. ~4.5 GB download streamed, never stored uncompressed.
-# Re-fetch unless a *complete* gzip already exists (gzip -t catches truncated downloads).
-# Write to .tmp and rename, so an interrupted run never leaves a bad final file.
-if ! gzip -t gtrd_hg38_tf_centers.bed.gz 2>/dev/null; then
-  echo "[refs] streaming + slimming GTRD meta-clusters (hg38) ..."
-  curl -sL "$GTRD_URL" \
-    | zcat \
-    | awk -F'\t' 'NR>1 && $12>=2 { s=$4; c=(s>=0)?($2+s):int(($2+$3)/2); print $1"\t"c"\t"c+1"\t"$6 }' \
-    | gzip > gtrd_hg38_tf_centers.bed.gz.tmp \
-    && mv gtrd_hg38_tf_centers.bed.gz.tmp gtrd_hg38_tf_centers.bed.gz
-fi
-echo "[refs] GTRD centers: $(zcat gtrd_hg38_tf_centers.bed.gz | wc -l) sites"
+for f in "$SHEET" "$META" "$TUMOR"; do
+  [[ -s "$f" ]] || { echo "ERROR: missing $f"; exit 1; }
+done
 
-[[ -s sedb3_human_sample_information.txt ]] || curl -sL -o sedb3_human_sample_information.txt "$SEDB_INFO_URL"
-echo "[refs] SEdb samples: $(($(wc -l < sedb3_human_sample_information.txt) - 1))"
+# 1. SEdb sample table (downloaded if absent)
+[[ -s "$SEINFO" ]] || \
+  curl -sL --connect-timeout 20 --max-time 120 -o "$SEINFO" "$SEDB_BASE/Human_sample_information_sedb3.txt"
+echo "[refs] SEdb samples: $(($(wc -l < "$SEINFO") - 1))"
 
-[[ -x liftOver ]] || { curl -sL -o liftOver "$LIFTOVER_URL"; chmod +x liftOver; }
-[[ -s hg38ToHg19.over.chain.gz ]] || curl -sL -o hg38ToHg19.over.chain.gz "$CHAIN_URL"
+# 2. panel tissues: samplesheet sample -> metadata disease -> tumor_types tissue
+mapfile -t TISSUES < <(awk -F',' '
+  FILENAME==ARGV[1] && FNR>1 { sub(/\r$/,"",$3); dt[$1]=$3 }                 # tumor_types: disease->tissue
+  FILENAME==ARGV[2] && FNR>1 { sub(/\r$/,"",$6); sd[$1]=$6 }                 # metadata:    sample ->disease
+  FILENAME==ARGV[3] && FNR>1 { sub(/\r$/,"",$1); if(dt[sd[$1]]!="") print dt[sd[$1]] }   # samplesheet sample
+' "$TUMOR" "$META" "$SHEET" | sort -u)
+echo "[refs] panel tissues: ${TISSUES[*]}"
 
-echo "[refs] done -> $REF_DIR"
+# 3. normal-lineage SEdb samples per tissue (cols: ID=1, Biosample type=4, Tissue type=5)
+: > "$SAMPLES"
+for t in "${TISSUES[@]}"; do
+  awk -F'\t' -v re="${TIS_RE[$t]:-$t}" -v t="$t" '
+    NR>1 && tolower($4) ~ /^tissue$|^primary cell$/ && tolower($5) ~ re { print $1"\t"t }
+  ' "$SEINFO" >> "$SAMPLES"
+done
+sort -u -o "$SAMPLES" "$SAMPLES"
+echo "[refs] reference samples per tissue:"; cut -f2 "$SAMPLES" | sort | uniq -c
+
+# 4. fetch each sample's super-enhancer BED (cached; re-runs skip existing files)
+while IFS=$'\t' read -r id _tissue; do
+  bed="$SEDIR/${id}_SE_hg19.bed"
+  [[ -s "$bed" ]] && continue
+  curl -sL --connect-timeout 20 --max-time 120 -o "$bed" "$SEDB_BASE/SE_hg19_bed/${id}_SE_hg19.bed" || true
+  head -1 "$bed" 2>/dev/null | grep -q '^se_chr' || { echo "  ! bad/empty $id"; rm -f "$bed"; }
+done < "$SAMPLES"
+
+echo "[refs] done -> $SEDIR ($(ls "$SEDIR" | wc -l) SE BEDs cached); samples -> $SAMPLES"

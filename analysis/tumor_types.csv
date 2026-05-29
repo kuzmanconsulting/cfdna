@@ -1,32 +1,32 @@
-disease,label
-Healthy,Healthy
-Bladder cancer (undefined),BLCA
-Breast cancer (Ductal carcinoma in situ),BRCA_DCIS
-Breast cancer (Invasive/infiltrating ductal),BRCA_IDC
-Breast cancer (Invasive/infiltrating lobular),BRCA_ILC
-Colorectal cancer (Adenocarcinoma),CRC_AD
-Colorectal cancer (undefined),CRC
-Esophageal cancer (undefined),ESCA
-Head and neck cancer (undefined),HNSC
-Kidney cancer (Clear cell),KIRC
-Kidney cancer (undefined),KIDNEY
-Liver cancer (Hepatocellular carcinoma),HCC
-Liver cancer (undefined),LIVER
-Lung cancer (Adenocarcinoma),LCA
-Lung cancer (adenocarcinoma),LCA
-Lung cancer (Small cell),SCLC
-Lung cancer (Squamous cell carcinoma),LUSC
-Lung cancer (Mesothelioma),MESO
-Ovarian cancer (serous tumors),OV_SER
-Ovarian cancer (undefined),OV
-Pancreatic cancer (Ductal adenocarcinoma),PDAC
-Pancreatic cancer (Ductal carcinoma),PDC
-Pancreatic cancer (undefined),PANC
-Prostate cancer (Adenocarcinoma),PRAD
-Prostate cancer (undefined),PROST
-Skin cancer (Melanoma),MEL
-Testicular cancer (Seminomatous),TGCT
-Uterine cancer (undefined),UCEC
-Crohn's disease,CD
-Ulcerative Colitis,UC
-Systemic Lupus Erythmatosus,SLE
+disease,label,tissue
+Healthy,Healthy,blood
+Bladder cancer (undefined),BLCA,bladder
+Breast cancer (Ductal carcinoma in situ),BRCA_DCIS,breast
+Breast cancer (Invasive/infiltrating ductal),BRCA_IDC,breast
+Breast cancer (Invasive/infiltrating lobular),BRCA_ILC,breast
+Colorectal cancer (Adenocarcinoma),CRC_AD,colon
+Colorectal cancer (undefined),CRC,colon
+Esophageal cancer (undefined),ESCA,esophagus
+Head and neck cancer (undefined),HNSC,head and neck
+Kidney cancer (Clear cell),KIRC,kidney
+Kidney cancer (undefined),KIDNEY,kidney
+Liver cancer (Hepatocellular carcinoma),HCC,liver
+Liver cancer (undefined),LIVER,liver
+Lung cancer (Adenocarcinoma),LCA,lung
+Lung cancer (adenocarcinoma),LCA,lung
+Lung cancer (Small cell),SCLC,lung
+Lung cancer (Squamous cell carcinoma),LUSC,lung
+Lung cancer (Mesothelioma),MESO,lung
+Ovarian cancer (serous tumors),OV_SER,ovary
+Ovarian cancer (undefined),OV,ovary
+Pancreatic cancer (Ductal adenocarcinoma),PDAC,pancreas
+Pancreatic cancer (Ductal carcinoma),PDC,pancreas
+Pancreatic cancer (undefined),PANC,pancreas
+Prostate cancer (Adenocarcinoma),PRAD,prostate
+Prostate cancer (undefined),PROST,prostate
+Skin cancer (Melanoma),MEL,skin
+Testicular cancer (Seminomatous),TGCT,testis
+Uterine cancer (undefined),UCEC,uterus
+Crohn's disease,CD,colon
+Ulcerative Colitis,UC,colon
+Systemic Lupus Erythmatosus,SLE,blood
